@@ -1,0 +1,407 @@
+/**
+ * Canvas component with zoom and pan support
+ * Handles the main rendering surface for the flowchart
+ */
+
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { Flowchart, Node, Edge, Position } from '../models/types';
+import { NodeComponent } from './Node';
+import { EdgeComponent } from './Edge';
+
+interface CanvasProps {
+  flowchart: Flowchart;
+  selectedNodeId: string | null;
+  selectedEdgeId: string | null;
+  onNodeSelect: (nodeId: string | null) => void;
+  onEdgeSelect: (edgeId: string | null) => void;
+  onNodeMove: (nodeId: string, position: Position) => void;
+  onNodeUpdate: (nodeId: string, updates: Partial<Node>) => void;
+  onEdgeDelete: (edgeId: string) => void;
+  connectingFrom: { nodeId: string; pointId: string } | null;
+  onConnectionStart: (nodeId: string, pointId: string) => void;
+  onConnectionEnd: (nodeId: string, pointId: string) => void;
+  onConnectionCancel: () => void;
+  onViewStateChange?: (viewState: { x: number; y: number; scale: number }) => void;
+  initialViewState?: { x: number; y: number; scale: number };
+  canvasRef?: React.RefObject<HTMLDivElement>;
+}
+
+// Helper function to convert screen coordinates to canvas coordinates
+const screenToCanvas = (
+  screenX: number,
+  screenY: number,
+  canvasRect: DOMRect,
+  transform: { x: number; y: number; scale: number }
+): Position => {
+  return {
+    x: (screenX - canvasRect.left - transform.x) / transform.scale,
+    y: (screenY - canvasRect.top - transform.y) / transform.scale,
+  };
+};
+
+export const Canvas: React.FC<CanvasProps> = ({
+  flowchart,
+  selectedNodeId,
+  selectedEdgeId,
+  onNodeSelect,
+  onEdgeSelect,
+  onNodeMove,
+  onNodeUpdate,
+  onEdgeDelete,
+  connectingFrom,
+  onConnectionStart,
+  onConnectionEnd,
+  onConnectionCancel,
+  onViewStateChange,
+  initialViewState,
+  canvasRef: externalCanvasRef,
+}) => {
+  const internalCanvasRef = useRef<HTMLDivElement>(null);
+  const canvasRef = externalCanvasRef || internalCanvasRef;
+  const [transform, setTransform] = useState(initialViewState || { x: 0, y: 0, scale: 1 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [tempConnection, setTempConnection] = useState<Position | null>(null);
+  const panPointerIdRef = useRef<number | null>(null);
+  const panStartClientRef = useRef<Position>({ x: 0, y: 0 });
+  const panStartTransformRef = useRef<{ x: number; y: number; scale: number }>({ x: 0, y: 0, scale: 1 });
+
+  // Update transform when initialViewState changes (e.g., after loading)
+  React.useEffect(() => {
+    if (initialViewState) {
+      setTransform(initialViewState);
+    }
+  }, [initialViewState]);
+
+  // Notify parent of view state changes
+  React.useEffect(() => {
+    if (onViewStateChange) {
+      onViewStateChange(transform);
+    }
+  }, [transform, onViewStateChange]);
+
+  // Pan with pointer events (supports mouse drag on empty area)
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      // Middle button always pans, left button pans only on empty area
+      const isMiddle = e.button === 1;
+      const isLeft = e.button === 0;
+
+      if (!isMiddle && !isLeft) return;
+      if (!isMiddle && connectingFrom) return;
+
+      const target = e.target as HTMLElement | null;
+      const clickedOnNode = target?.closest?.('[data-node]');
+      const clickedOnEdge = target?.closest?.('svg path');
+
+      if (!isMiddle && (clickedOnNode || clickedOnEdge)) return;
+
+      panPointerIdRef.current = e.pointerId;
+      panStartClientRef.current = { x: e.clientX, y: e.clientY };
+      panStartTransformRef.current = transform;
+      setIsPanning(true);
+
+      // Capture pointer so dragging continues even if cursor leaves the canvas
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      e.preventDefault();
+    },
+    [connectingFrom, transform]
+  );
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isPanning) return;
+    if (panPointerIdRef.current !== e.pointerId) return;
+
+    const dx = e.clientX - panStartClientRef.current.x;
+    const dy = e.clientY - panStartClientRef.current.y;
+    const start = panStartTransformRef.current;
+
+    setTransform((prev) => ({
+      ...prev,
+      x: start.x + dx,
+      y: start.y + dy,
+    }));
+  }, [isPanning]);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    if (panPointerIdRef.current !== e.pointerId) return;
+    panPointerIdRef.current = null;
+    setIsPanning(false);
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (connectingFrom) {
+        // Show temporary connection line
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          // Convert mouse screen coordinates to canvas coordinates
+          const canvasX = (e.clientX - rect.left - transform.x) / transform.scale;
+          const canvasY = (e.clientY - rect.top - transform.y) / transform.scale;
+          setTempConnection({ x: canvasX, y: canvasY });
+        }
+      }
+    },
+    [transform, connectingFrom]
+  );
+
+  // Global mouse move handler for temporary connection line
+  useEffect(() => {
+    if (connectingFrom) {
+      const handleGlobalMouseMove = (e: MouseEvent) => {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          // Convert mouse screen coordinates to canvas coordinates
+          const canvasX = (e.clientX - rect.left - transform.x) / transform.scale;
+          const canvasY = (e.clientY - rect.top - transform.y) / transform.scale;
+          setTempConnection({ x: canvasX, y: canvasY });
+        }
+      };
+
+      window.addEventListener('mousemove', handleGlobalMouseMove);
+      return () => {
+        window.removeEventListener('mousemove', handleGlobalMouseMove);
+      };
+    }
+  }, [connectingFrom, transform]);
+
+  const handleMouseUp = useCallback(() => {
+    // Panning is handled by global mouse up event
+    setTempConnection(null);
+  }, []);
+
+  // Zoom with mouse wheel
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const newScale = Math.max(0.1, Math.min(3, transform.scale * delta));
+      setTransform({ ...transform, scale: newScale });
+    },
+    [transform]
+  );
+
+  // Click on canvas to deselect - handled by transformed container onClick
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedEdgeId) {
+          onEdgeDelete(selectedEdgeId);
+          onEdgeSelect(null);
+        }
+      }
+      if (e.key === 'Escape' && connectingFrom) {
+        onConnectionCancel();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedEdgeId, connectingFrom, onEdgeDelete, onEdgeSelect, onConnectionCancel]);
+
+  return (
+    <div
+      ref={canvasRef}
+      className="canvas"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onWheel={handleWheel}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        overflow: 'hidden',
+        backgroundColor: '#f5f5f5',
+        cursor: isPanning ? 'grabbing' : connectingFrom ? 'crosshair' : 'grab',
+        touchAction: 'none',
+      }}
+    >
+      <div
+        style={{
+          transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+          transformOrigin: '0 0',
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+        }}
+        onMouseDown={(e) => {
+          // Allow panning when clicking on the transformed container background
+          if (e.button === 0 && !connectingFrom && e.target === e.currentTarget) {
+            const target = e.target as HTMLElement;
+            const clickedOnNode = target.closest('[data-node]');
+            const clickedOnEdge = target.closest('svg path');
+            
+            if (!clickedOnNode && !clickedOnEdge) {
+              setIsPanning(true);
+              setPanStart({ x: e.clientX - transform.x, y: e.clientY - transform.y });
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }
+        }}
+        onClick={(e) => {
+          // Click on the transformed container (background)
+          // Only deselect if not panning (to avoid deselecting while dragging)
+          if (e.target === e.currentTarget && !isPanning) {
+            onNodeSelect(null);
+            onEdgeSelect(null);
+            if (connectingFrom) {
+              onConnectionCancel();
+            }
+          }
+        }}
+      >
+        {/* Render edges first (behind nodes) - use single SVG container */}
+        <svg
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+            zIndex: 0,
+            overflow: 'visible',
+          }}
+        >
+          {flowchart.edges.map((edge) => {
+            const sourceNode = flowchart.nodes.find((n) => n.id === edge.sourceNodeId);
+            const targetNode = flowchart.nodes.find((n) => n.id === edge.targetNodeId);
+            if (!sourceNode || !targetNode) return null;
+
+            const sourcePoint = sourceNode.connectionPoints.find((p) => p.id === edge.sourcePointId);
+            const targetPoint = targetNode.connectionPoints.find((p) => p.id === edge.targetPointId);
+            if (!sourcePoint || !targetPoint) return null;
+
+            // Calculate connection point positions using node position and connection point relative position
+            const sourceX = sourceNode.position.x + sourcePoint.position.x;
+            const sourceY = sourceNode.position.y + sourcePoint.position.y;
+            const targetX = targetNode.position.x + targetPoint.position.x;
+            const targetY = targetNode.position.y + targetPoint.position.y;
+
+            const dx = targetX - sourceX;
+            const controlPoint1X = sourceX + dx * 0.5;
+            const controlPoint1Y = sourceY;
+            const controlPoint2X = targetX - dx * 0.5;
+            const controlPoint2Y = targetY;
+
+            const path = `M ${sourceX} ${sourceY} C ${controlPoint1X} ${controlPoint1Y}, ${controlPoint2X} ${controlPoint2Y}, ${targetX} ${targetY}`;
+            const isSelected = edge.id === selectedEdgeId;
+
+            return (
+              <g key={edge.id}>
+                {/* Invisible hit area for selection */}
+                <path
+                  d={path}
+                  stroke="transparent"
+                  strokeWidth="20"
+                  fill="none"
+                  style={{ pointerEvents: 'all', cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdgeSelect(edge.id);
+                  }}
+                />
+                {/* Visible edge */}
+                <path
+                  d={path}
+                  stroke={isSelected ? '#2196f3' : (edge.color || '#666')}
+                  strokeWidth={isSelected ? 3 : 2}
+                  fill="none"
+                  markerEnd="url(#arrowhead-canvas)"
+                />
+              </g>
+            );
+          })}
+          {/* Arrow head marker definition */}
+          <defs>
+            <marker
+              id="arrowhead-canvas"
+              markerWidth="10"
+              markerHeight="10"
+              refX="9"
+              refY="3"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <polygon points="0 0, 10 3, 0 6" fill="#666" />
+            </marker>
+          </defs>
+        </svg>
+
+        {/* Temporary connection line */}
+        {connectingFrom && tempConnection && (() => {
+          const sourceNode = flowchart.nodes.find((n) => n.id === connectingFrom.nodeId);
+          if (!sourceNode) return null;
+          const sourcePoint = sourceNode.connectionPoints.find(
+            (p) => p.id === connectingFrom.pointId
+          );
+          if (!sourcePoint) return null;
+          
+          // Use connection point's relative position
+          const sourceX = sourceNode.position.x + sourcePoint.position.x;
+          const sourceY = sourceNode.position.y + sourcePoint.position.y;
+
+          const dx = tempConnection.x - sourceX;
+          const controlPoint1X = sourceX + dx * 0.5;
+          const controlPoint1Y = sourceY;
+          const controlPoint2X = tempConnection.x - dx * 0.5;
+          const controlPoint2Y = tempConnection.y;
+
+          const path = `M ${sourceX} ${sourceY} C ${controlPoint1X} ${controlPoint1Y}, ${controlPoint2X} ${controlPoint2Y}, ${tempConnection.x} ${tempConnection.y}`;
+
+          return (
+            <svg
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                zIndex: 1,
+                overflow: 'visible',
+              }}
+            >
+              <path
+                d={path}
+                stroke="#2196f3"
+                strokeWidth="2"
+                strokeDasharray="5,5"
+                fill="none"
+              />
+            </svg>
+          );
+        })()}
+
+        {/* Render nodes */}
+        {flowchart.nodes.map((node) => (
+          <NodeComponent
+            key={node.id}
+            node={node}
+            isSelected={node.id === selectedNodeId}
+            onSelect={() => onNodeSelect(node.id)}
+            onMove={(position) => onNodeMove(node.id, position)}
+            onUpdate={(updates) => onNodeUpdate(node.id, updates)}
+            onConnectionStart={onConnectionStart}
+            onConnectionEnd={onConnectionEnd}
+            connectingFrom={connectingFrom}
+            canvasTransform={transform}
+            canvasRef={canvasRef}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+

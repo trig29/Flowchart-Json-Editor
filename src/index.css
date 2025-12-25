@@ -1,0 +1,378 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* VSCode-like palette */
+  --vscode-bg: #1e1e1e;
+  --vscode-panel: #252526;
+  --vscode-panel-2: #2d2d2d;
+  --vscode-border: #3c3c3c;
+  --vscode-fg: #cccccc;
+  --vscode-fg-muted: #9da3ad;
+  --vscode-accent: #007acc;
+  --vscode-hover: #2a2d2e;
+  --vscode-selection: #094771;
+  --vscode-danger: #f14c4c;
+  --vscode-input: #3c3c3c;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  background: var(--vscode-bg);
+  color: var(--vscode-fg);
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+button:active {
+  opacity: 0.8;
+}
+
+/* Layout (VSCode-like workbench) */
+.appShell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-bg);
+}
+
+.topBar {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--vscode-panel-2);
+  border-bottom: 1px solid var(--vscode-border);
+  user-select: none;
+}
+
+.workbench {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.paneLeft {
+  width: 260px;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-panel);
+  border-right: 1px solid var(--vscode-border);
+}
+
+.paneCenter {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  position: relative;
+  background: var(--vscode-bg);
+}
+
+.paneRight {
+  width: 320px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-panel);
+  border-left: 1px solid var(--vscode-border);
+}
+
+.panelHeader {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--vscode-border);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--vscode-fg-muted);
+}
+
+.panelBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Buttons */
+.vsBtn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vscode-fg);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vsBtn:hover {
+  opacity: 1;
+  background: var(--vscode-hover);
+  border-color: var(--vscode-border);
+}
+
+.vsBtnPrimary {
+  background: var(--vscode-accent);
+  color: #fff;
+}
+
+.vsBtnPrimary:hover {
+  background: #0086d6;
+}
+
+.vsBtnDanger {
+  background: transparent;
+  color: var(--vscode-danger);
+}
+
+.vsBtnIcon {
+  width: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toolbarSep {
+  width: 1px;
+  height: 18px;
+  background: var(--vscode-border);
+  margin: 0 4px;
+}
+
+.toolbarSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.pathPill {
+  max-width: 40vw;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--vscode-fg-muted);
+}
+
+/* Explorer */
+.explorer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.explorerSubHeader {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--vscode-border);
+  font-size: 12px;
+  color: var(--vscode-fg);
+}
+
+.explorerTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.explorerTitleName {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+.treeItem {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--vscode-fg);
+}
+
+.treeItem:hover {
+  background: var(--vscode-hover);
+}
+
+.treeItem.selected {
+  background: var(--vscode-selection);
+}
+
+.treeItem.dragOver {
+  outline: 1px dashed var(--vscode-accent);
+  outline-offset: -1px;
+}
+
+.twistie {
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-fg-muted);
+}
+
+.treeIcon {
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-fg-muted);
+}
+
+.treeLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+/* Context menu */
+.ctxMenu {
+  position: fixed;
+  background: var(--vscode-panel-2);
+  border: 1px solid var(--vscode-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+  min-width: 160px;
+  padding: 6px 0;
+}
+
+.ctxItem {
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--vscode-fg);
+  cursor: pointer;
+}
+
+.ctxItem:hover {
+  background: var(--vscode-hover);
+}
+
+.ctxItem.danger {
+  color: var(--vscode-danger);
+}
+
+.emptyState {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--vscode-fg-muted);
+  text-align: center;
+}
+
+/* Modal */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  background: var(--vscode-panel-2);
+  border: 1px solid var(--vscode-border);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.modalTitle {
+  font-size: 12px;
+  color: var(--vscode-fg);
+  margin-bottom: 10px;
+  user-select: none;
+}
+
+.modalInput {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-border);
+  background: var(--vscode-input);
+  color: var(--vscode-fg);
+  outline: none;
+}
+
+.modalInput:focus {
+  border-color: var(--vscode-accent);
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Right panel form controls (make legacy inline styles look OK on dark theme) */
+.paneRight h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.paneRight label {
+  color: var(--vscode-fg);
+}
+
+.paneRight input,
+.paneRight textarea {
+  background: var(--vscode-input) !important;
+  color: var(--vscode-fg) !important;
+  border-color: var(--vscode-border) !important;
+}
+
+.paneRight textarea::placeholder,
+.paneRight input::placeholder {
+  color: var(--vscode-fg-muted);
+}
+
+.paneRight p {
+  color: var(--vscode-fg-muted);
+}
+
