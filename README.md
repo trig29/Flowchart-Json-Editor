@@ -1,42 +1,51 @@
-# Flowchart JSON Editor
+## Flowchart JSON Editor（流程图 JSON 编辑器）
 
-A desktop Flowchart Editor application built with Electron, React, and TypeScript. Designed specifically for branching narrative and game script writing with extensible data serialization.
+一个基于 **Electron + React + TypeScript** 的桌面应用，用来编辑“节点-连线”形式的流程图，并以 **JSON** 作为可扩展的数据存储格式。适合分支叙事、对话树、游戏脚本结构整理等场景。
 
-## Features
+## 功能
 
-- **Visual Flowchart Editor**: Create and edit narrative logic with a node-based interface
-- **Node Management**: 
-  - Create, move, and edit nodes
-  - Customize node properties (text, color, size)
-  - Connection points for linking nodes
-- **Edge Connections**: Connect nodes to form directed flowcharts
-- **Canvas Interaction**:
-  - Zoom and pan support
-  - Smooth dragging and selection
-- **VSCode-like Explorer**:
-  - Project folder tree
-  - Drag & drop to move files/folders into another folder
-  - Right-click rename / delete
-  - Auto-save current file when switching files in the explorer
-- **Persistence**:
-  - Save and load flowcharts as JSON
-  - Export to PNG or SVG images
-- **PNG Export Text Wrap**:
-  - Auto-wrap node text within the node bounds (keeps manual newlines)
-- **Extensible Architecture**: Clean data model designed for future narrative/game script integration
+- **流程图编辑**
+  - 新增节点、拖拽移动、调整节点尺寸
+  - 节点连线（有向连接）与删除
+  - 画布缩放/平移
+- **属性面板**
+  - 节点：文本（支持换行）、背景色、宽高、删除
+  - 连接：颜色、删除
+- **撤销 / 重做**
+  - 支持常见操作的撤销重做（见下方“快捷键”与“限制说明”）
+- **项目/文件管理（类似 VSCode Explorer）**
+  - 打开文件夹 / 新建项目（选择一个目录作为项目根）
+  - 仅展示 `.json` 文件；支持文件夹展开
+  - 右键：新建流程图（`.json`）、新建文件夹、重命名、删除
+  - 拖拽：把文件/文件夹移动到其他文件夹
+  - 切换文件时自动保存当前文件（已有路径时）
+- **导出**
+  - 导出 **PNG**：节点文本自动换行（会保留手动换行）
+  - 导出 **SVG**
+- **项目备份**
+  - 备份当前项目文件夹为 zip 到 `<项目>/backups/`
+  - 自动备份：每 5 分钟静默执行一次（也可手动点击备份按钮）
+  - 备份会排除：`backups/`、`node_modules/`、`dist/`、`dist-react/`、`release/`、`.git/`
 
-## Architecture
+## 快捷键
 
-The application follows a clean separation of concerns:
+- **Ctrl/Cmd + S**：保存
+- **Ctrl/Cmd + Z**：撤销
+- **Ctrl/Cmd + Shift + Z**：重做
+- **Delete / Backspace**：删除选中的节点或连接（输入框/文本编辑中不会触发）
 
-- **Data Layer** (`src/models/`): Pure data structures and operations, independent of rendering
-- **Rendering Layer** (`src/components/`): React components for UI and canvas rendering
-- **Interaction Logic** (`src/App.tsx`): Coordinates user interactions and state management
-- **Electron Layer** (`electron/`): Main process and file system operations
+## 撤销/重做的限制说明
 
-### Data Model
+为了避免历史记录过于碎片化，目前的撤销/重做主要覆盖：
 
-The flowchart is represented as a pure JSON structure:
+- **节点**：移动、调整尺寸、背景色（以及连接点等结构性变更）
+- **连接**：颜色
+
+说明：**节点文本编辑目前不进入撤销栈**（属于即时更新）。
+
+## 数据格式（JSON）
+
+流程图文件本质是一个可序列化对象：
 
 ```json
 {
@@ -45,131 +54,115 @@ The flowchart is represented as a pure JSON structure:
       "id": "node-0",
       "position": { "x": 400, "y": 300 },
       "size": { "width": 150, "height": 80 },
-      "text": "Start",
+      "text": "新节点",
       "backgroundColor": "#e3f2fd",
-      "connectionPoints": [...]
+      "connectionPoints": [
+        { "id": "node-0-input", "type": "input", "position": { "x": 0, "y": -40 } },
+        { "id": "node-0-output", "type": "output", "position": { "x": 0, "y": 40 } }
+      ],
+      "metadata": {}
     }
   ],
   "edges": [
     {
-      "id": "edge-123",
+      "id": "edge-xxx",
       "sourceNodeId": "node-0",
       "sourcePointId": "node-0-output",
       "targetNodeId": "node-1",
-      "targetPointId": "node-1-input"
+      "targetPointId": "node-1-input",
+      "color": "#666",
+      "metadata": {}
     }
   ],
+  "viewState": { "x": 0, "y": 0, "scale": 1 },
   "metadata": {}
 }
 ```
 
-This structure is designed to be extensible for future features like:
-- Narrative events
-- Conditional branches
-- Game-specific metadata (flags, variables, triggers)
+## 开发环境
 
-## Development
+### 环境要求
 
-### Prerequisites
+- Node.js 18+
+- npm
 
-- Node.js (v18 or higher)
-- npm or yarn
-
-### Installation
+### 安装依赖
 
 ```bash
 npm install
 ```
 
-### Development Mode
+### 本地开发（热更新）
 
 ```bash
 npm run dev
 ```
 
-This will:
-1. Start the Vite dev server for React (http://localhost:5173)
-2. Launch Electron when the server is ready
+说明：会启动 Vite（默认 `http://localhost:5173`）并在其就绪后拉起 Electron。
 
-### Build
+### 仅启动前端（浏览器预览，可用于调 UI）
+
+```bash
+npm run dev:react
+```
+
+注意：此模式下没有 Electron 的文件系统能力（`window.electronAPI` 不可用），保存/加载/导出/备份等会受限。
+
+### 构建
 
 ```bash
 npm run build
 ```
 
-This compiles both the React app and Electron main process.
+输出：
+- 前端构建产物：`dist-react/`
+- 主进程编译产物：`dist/`
 
-## Packaging (Windows Installer)
+## 打包（Windows 安装包）
+
+### 标准打包
 
 ```bash
 npm run dist
 ```
 
-Artifacts are generated in `release/`:
-- NSIS installer: `release/Flowchart Json Editor Setup *.exe`
-- Unpacked app: `release/win-unpacked/Flowchart Json Editor.exe`
+也可以只生成解压目录（不生成安装包）：
 
-## Usage
+```bash
+npm run pack
+```
 
-### Creating Nodes
+产物目录：`release/`
+- 安装包：`release/Flowchart Json Editor Setup *.exe`
+- 解压目录：`release/win-unpacked/Flowchart Json Editor.exe`
 
-- Click the "+ Add Node" button in the toolbar
-- Nodes appear at the center of the canvas
+### 备用打包（避免旧目录被占用导致清理失败）
 
-### Moving Nodes
+当 `release/win-unpacked` 被系统占用（常见于刚运行过打包后的 exe）导致 `EPERM unlink ...` 时，可用：
 
-- Click and drag a node to move it
-- Nodes can be positioned anywhere on the canvas
+```bash
+npm run dist:alt
+```
 
-### Editing Nodes
+产物目录：`release-alt/`
 
-- **Double-click** a node to edit its text inline
-- Select a node and use the **Property Panel** on the right to:
-  - Change text
-  - Modify background color
-  - Adjust width and height
+## 目录结构
 
-### Creating Connections
+- **`electron/`**：Electron 主进程与 preload（文件系统、导出、备份等 IPC）
+- **`src/`**：React 渲染进程（画布、节点/连线、属性面板、文件树等）
+- **`src/models/`**：数据模型与纯函数（创建/更新/序列化/反序列化）
+- **`dist/`**：主进程编译输出（由 `tsc -p tsconfig.electron.json` 生成）
+- **`dist-react/`**：前端构建输出（由 Vite 生成）
+- **`release/`**：electron-builder 打包输出（安装包与 win-unpacked）
 
-1. Click on an **output connection point** (orange circle at bottom of node)
-2. Drag to an **input connection point** (green circle at top of target node)
-3. Release to create the connection
+## 常见问题（打包/运行）
 
-### Deleting Connections
-
-- Select a connection (edge) by clicking on it
-- Press `Delete` or `Backspace` to remove it
-
-### Canvas Navigation
-
-- **Zoom**: Use mouse wheel to zoom in/out
-- **Pan**: Left mouse drag on empty canvas area (or middle mouse drag)
-
-### Saving and Loading
-
-- **Save**: Click "Save" to export the flowchart as JSON
-- **Load**: Click "Load" to import a previously saved flowchart
-- **Auto-save on switch**: When you open another file from the explorer, the current file is saved automatically (if it has a file path)
-
-### Exporting Images
-
-- **Export PNG**: Export the flowchart as a PNG image
-- **Export SVG**: Export the flowchart as an SVG vector image
-
-## Keyboard Shortcuts
-
-- `Delete` / `Backspace`: Delete selected edge
-- `Escape`: Cancel connection in progress
-
-## Future Extensibility
-
-The architecture is designed to support future enhancements:
-
-1. **Narrative Events**: Add event types and metadata to nodes
-2. **Conditional Branches**: Support conditional logic in edges
-3. **Script Compilation**: Convert flowcharts to executable game scripts
-4. **Node Templates**: Pre-defined node types for common narrative patterns
-5. **Validation**: Check for common errors (orphaned nodes, cycles, etc.)
+- **打包时报 `EPERM: operation not permitted, unlink ... release\\win-unpacked\\...`**
+  - 原因：旧的 `win-unpacked` 文件被占用（运行中的程序/资源管理器/杀软等）。
+  - 处理：关闭占用进程后再打包，或直接使用 `npm run dist:alt` 输出到新目录。
+- **打包后启动报 `Cannot find module 'archiver-utils'`**
+  - 原因：主进程的 zip 备份功能依赖 `archiver`，其传递依赖在生产包中缺失。
+  - 处理：确保 `archiver-utils` 在 `dependencies` 中，执行 `npm install` 后重新打包。
 
 ## License
 
