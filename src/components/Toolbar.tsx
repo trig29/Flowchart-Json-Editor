@@ -6,6 +6,10 @@ import React from 'react';
 
 interface ToolbarProps {
   onAddNode: () => void;
+  onUndo: () => void;
+  canUndo: boolean;
+  onRedo: () => void;
+  canRedo: boolean;
   onSave: () => void;
   onLoad: () => void;
   onExportPNG: () => void;
@@ -15,6 +19,10 @@ interface ToolbarProps {
 
 export const Toolbar: React.FC<ToolbarProps> = ({
   onAddNode,
+  onUndo,
+  canUndo,
+  onRedo,
+  canRedo,
   onSave,
   onLoad,
   onExportPNG,
@@ -30,6 +38,26 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         className="vsBtn vsBtnPrimary"
       >
         添加节点
+      </button>
+
+      <button
+        onClick={onUndo}
+        className="vsBtn vsBtnIcon"
+        disabled={!canUndo}
+        title="撤回（Ctrl+Z）"
+        style={{ opacity: canUndo ? 1 : 0.5, cursor: canUndo ? 'pointer' : 'not-allowed' }}
+      >
+        ↶
+      </button>
+
+      <button
+        onClick={onRedo}
+        className="vsBtn vsBtnIcon"
+        disabled={!canRedo}
+        title="前进（Ctrl+Shift+Z）"
+        style={{ opacity: canRedo ? 1 : 0.5, cursor: canRedo ? 'pointer' : 'not-allowed' }}
+      >
+        ↷
       </button>
 
       <div className="toolbarSep" />

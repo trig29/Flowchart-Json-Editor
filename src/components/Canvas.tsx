@@ -24,6 +24,8 @@ interface CanvasProps {
   onViewStateChange?: (viewState: { x: number; y: number; scale: number }) => void;
   initialViewState?: { x: number; y: number; scale: number };
   canvasRef?: React.RefObject<HTMLDivElement>;
+  onNodeInteractionStart?: () => void;
+  onNodeInteractionEnd?: () => void;
 }
 
 // Helper function to convert screen coordinates to canvas coordinates
@@ -55,6 +57,8 @@ export const Canvas: React.FC<CanvasProps> = ({
   onViewStateChange,
   initialViewState,
   canvasRef: externalCanvasRef,
+  onNodeInteractionStart,
+  onNodeInteractionEnd,
 }) => {
   const internalCanvasRef = useRef<HTMLDivElement>(null);
   const canvasRef = externalCanvasRef || internalCanvasRef;
@@ -174,28 +178,33 @@ export const Canvas: React.FC<CanvasProps> = ({
     setTempConnection(null);
   }, []);
 
-  // Zoom with mouse wheel
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
+  // Zoom with mouse wheel - use native event listener with passive: false
+  useEffect(() => {
+    const canvasElement = canvasRef.current;
+    if (!canvasElement) return;
+
+    const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      const newScale = Math.max(0.1, Math.min(3, transform.scale * delta));
-      setTransform({ ...transform, scale: newScale });
-    },
-    [transform]
-  );
+      setTransform((prev) => {
+        const newScale = Math.max(0.1, Math.min(3, prev.scale * delta));
+        return { ...prev, scale: newScale };
+      });
+    };
+
+    // Add event listener with passive: false to allow preventDefault
+    canvasElement.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      canvasElement.removeEventListener('wheel', handleWheel);
+    };
+  }, [canvasRef]);
 
   // Click on canvas to deselect - handled by transformed container onClick
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedEdgeId) {
-          onEdgeDelete(selectedEdgeId);
-          onEdgeSelect(null);
-        }
-      }
       if (e.key === 'Escape' && connectingFrom) {
         onConnectionCancel();
       }
@@ -203,7 +212,15 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedEdgeId, connectingFrom, onEdgeDelete, onEdgeSelect, onConnectionCancel]);
+  }, [connectingFrom, onConnectionCancel]);
+
+  const handleInteractionStart = useCallback(() => {
+    onNodeInteractionStart?.();
+  }, [onNodeInteractionStart]);
+
+  const handleInteractionEnd = useCallback(() => {
+    onNodeInteractionEnd?.();
+  }, [onNodeInteractionEnd]);
 
   return (
     <div
@@ -215,7 +232,6 @@ export const Canvas: React.FC<CanvasProps> = ({
       onPointerCancel={handlePointerUp}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onWheel={handleWheel}
       style={{
         width: '100%',
         height: '100%',
@@ -398,6 +414,8 @@ export const Canvas: React.FC<CanvasProps> = ({
             connectingFrom={connectingFrom}
             canvasTransform={transform}
             canvasRef={canvasRef}
+            onInteractionStart={handleInteractionStart}
+            onInteractionEnd={handleInteractionEnd}
           />
         ))}
       </div>

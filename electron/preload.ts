@@ -22,5 +22,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   moveToFolder: (sourcePath: string, destFolderPath: string) =>
     ipcRenderer.invoke('move-to-folder', sourcePath, destFolderPath),
   renamePath: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-path', oldPath, newName),
+  backupProject: (projectPath: string) => ipcRenderer.invoke('backup-project', projectPath),
 });
 

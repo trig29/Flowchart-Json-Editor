@@ -5,9 +5,19 @@
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import * as fs from 'fs/promises';
+import { createWriteStream } from 'fs';
 import * as path from 'path';
+import archiver from 'archiver';
 
 let mainWindow: BrowserWindow | null = null;
+const backupLocks = new Map<string, boolean>();
+
+const formatTimestamp = (d: Date): string => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(
+    d.getMinutes()
+  )}${pad(d.getSeconds())}`;
+};
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -21,10 +31,13 @@ function createWindow(): void {
   });
 
   // Load the React app
-  if (!app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173');
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools();
   } else {
+    // In `npm start` (not packaged), we still want to load the built renderer output.
+    // Make sure to run `npm run build` once before `npm start`.
     mainWindow.loadFile(path.join(__dirname, '../dist-react/index.html'));
   }
 
@@ -276,5 +289,61 @@ ipcMain.handle('export-image', async (_, imageData: string, format: 'png' | 'svg
   }
 
   return { success: false };
+});
+
+// Backup project folder to zip inside <projectPath>/backups
+ipcMain.handle('backup-project', async (_, projectPath: string) => {
+  try {
+    if (!projectPath) return { success: false, error: 'Missing project path' };
+
+    // simple per-project lock
+    if (backupLocks.get(projectPath)) {
+      return { success: false, error: 'Backup already running' };
+    }
+    backupLocks.set(projectPath, true);
+
+    const backupsDir = path.join(projectPath, 'backups');
+    await fs.mkdir(backupsDir, { recursive: true });
+
+    const zipName = `backup-${formatTimestamp(new Date())}.zip`;
+    const zipPath = path.join(backupsDir, zipName);
+
+    // Create zip stream
+    const output = createWriteStream(zipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    const done = new Promise<{ success: boolean; path?: string; error?: string }>((resolve) => {
+      output.on('close', () => resolve({ success: true, path: zipPath }));
+      output.on('error', (err) => resolve({ success: false, error: err.message }));
+      archive.on('error', (err) => resolve({ success: false, error: err.message }));
+    });
+
+    archive.pipe(output);
+
+    // Exclude backups itself and typical build/dev folders
+    archive.glob('**/*', {
+      cwd: projectPath,
+      dot: true,
+      follow: false,
+      ignore: [
+        'backups/**',
+        '**/backups/**',
+        'node_modules/**',
+        'dist/**',
+        'dist-react/**',
+        'release/**',
+        '.git/**',
+      ],
+    });
+
+    await archive.finalize();
+    const result = await done;
+    return result;
+  } catch (error) {
+    console.error('Failed to backup project:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    backupLocks.delete(projectPath);
+  }
 });
 

@@ -28,6 +28,7 @@ export interface ElectronAPI {
     destFolderPath: string
   ) => Promise<{ success: boolean; path?: string; error?: string }>;
   renamePath: (oldPath: string, newName: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+  backupProject: (projectPath: string) => Promise<{ success: boolean; path?: string; error?: string }>;
 }
 
 declare global {

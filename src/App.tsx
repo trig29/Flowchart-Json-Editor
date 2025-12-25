@@ -3,7 +3,7 @@
  * Manages flowchart state and coordinates all interactions
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Flowchart, Node, Edge, Position } from './models/types';
 import {
   createFlowchart,
@@ -21,9 +21,24 @@ import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { PropertyPanel } from './components/PropertyPanel';
 import { FileExplorer } from './components/FileExplorer';
+import { useUndoRedo } from './hooks/useUndoRedo';
 
 function App() {
-  const [flowchart, setFlowchart] = useState<Flowchart>(createFlowchart());
+  const {
+    state: flowchart,
+    stateRef: flowchartRef,
+    setState: setFlowchart,
+    setStateWithHistory,
+    startTransaction,
+    commitTransaction,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    resetHistory,
+    isTransactionActive
+  } = useUndoRedo<Flowchart>(createFlowchart());
+
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<{
@@ -36,6 +51,34 @@ function App() {
   const nodeIdCounter = useRef(0);
   const canvasViewStateRef = useRef<{ x: number; y: number; scale: number } | null>(null);
 
+  // Undo/Redo Handlers
+  const handleUndo = useCallback(() => {
+    undo();
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setConnectingFrom(null);
+  }, [undo]);
+
+  const handleRedo = useCallback(() => {
+    redo();
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setConnectingFrom(null);
+  }, [redo]);
+
+  const isUndoableNodeUpdate = (updates: Partial<Node>): boolean => {
+    // Only: move/resize/backgroundColor are undoable. Text is not undoable.
+    if ('backgroundColor' in updates) return true;
+    if ('size' in updates) return true;
+    if ('position' in updates) return true;
+    if ('connectionPoints' in updates) return true;
+    return false;
+  };
+
+  const isUndoableEdgeUpdate = (updates: Partial<Edge>): boolean => {
+    return 'color' in updates;
+  };
+
   // Node operations
   const handleAddNode = useCallback(() => {
     // Calculate center of visible canvas area
@@ -46,9 +89,6 @@ function App() {
       const viewState = canvasViewStateRef.current;
       const rect = canvasRef.current.getBoundingClientRect();
       
-      // Calculate visible center in canvas coordinates
-      // Screen center: (rect.width / 2, rect.height / 2)
-      // Convert to canvas coordinates
       const visibleCenterX = (rect.width / 2 - viewState.x) / viewState.scale;
       const visibleCenterY = (rect.height / 2 - viewState.y) / viewState.scale;
       
@@ -61,16 +101,126 @@ function App() {
       { x: centerX, y: centerY },
       { width: 150, height: 80 }
     );
-    setFlowchart((fc) => addNode(fc, newNode));
-  }, []);
+    setStateWithHistory(addNode(flowchartRef.current, newNode));
+  }, [flowchartRef, setStateWithHistory]);
 
   const handleNodeMove = useCallback((nodeId: string, position: Position) => {
-    setFlowchart((fc) => updateNode(fc, nodeId, { position }));
-  }, []);
+    // During move (drag), we update state directly without history history is handled by transaction
+    setFlowchart(updateNode(flowchartRef.current, nodeId, { position }));
+  }, [flowchartRef, setFlowchart]);
 
   const handleNodeUpdate = useCallback((nodeId: string, updates: Partial<Node>) => {
-    setFlowchart((fc) => updateNode(fc, nodeId, updates));
-  }, []);
+    const undoable = isUndoableNodeUpdate(updates);
+    
+    // Text-only edits are not undoable
+    if (!undoable) {
+      setFlowchart(updateNode(flowchartRef.current, nodeId, updates));
+      return;
+    }
+
+    // Determine if this is an "immediate" update or part of a transaction
+    // However, since PropertyPanel inputs might fire multiple times, 
+    // we rely on the parent component calling startTransaction/commitTransaction for inputs
+    // For now, assume PropertyPanel updates are immediate unless wrapped
+    
+    // Note: Canvas interactions (drag) handle transactions via onNodeInteractionStart/End
+    // PropertyPanel interactions (resize inputs) handle transactions via onNodeEditStart/End
+    
+    // If we are just receiving an update, check if we should push to history
+    // But wait, the hook handles transactions internally via startTransaction/commitTransaction
+    // If we are in a transaction (drag), setFlowchart is enough (transaction logic is handled by commit)
+    
+    // We don't have direct access to "are we in a transaction" state from here easily without exposing more refs,
+    // but the pattern is:
+    // 1. startTransaction() called
+    // 2. setFlowchart() called many times
+    // 3. commitTransaction() called -> saves history if changed
+    
+    // If we are NOT in a transaction (e.g. single click color change), we should use setStateWithHistory
+    // But how do we know?
+    // We can assume that if it's coming from PropertyPanel without start/end events, it's immediate.
+    // The PropertyPanel calls onNodeEditStart/End.
+    
+    // Simplified logic: The UI components decide transaction boundaries.
+    // Here we just update.
+    // BUT: If no transaction is active, setFlowchart WON'T save history.
+    // We need to know if we should use setStateWithHistory.
+    
+    // Let's modify the PropertyPanel/Canvas usage slightly:
+    // For single-shot updates (like color picker closing), we might want setStateWithHistory.
+    // But `handleNodeUpdate` is generic.
+    
+    // We'll rely on a small heuristic:
+    // If it's a "continuous" update (drag/resize), the caller calls startTransaction/commitTransaction.
+    // In that case, we use `setFlowchart` here.
+    // If it's a "discrete" update (button click), we should use `setStateWithHistory`.
+    
+    // To solve this cleanly without changing all signatures:
+    // We can assume that if onNodeUpdate is called, we update the state.
+    // Whether it generates history depends on whether a transaction is open.
+    // BUT the hook doesn't auto-detect "no transaction open -> create one-off history".
+    // We need to handle that.
+    
+    // Let's assume discrete updates unless we know better?
+    // Or just use setFlowchart and let the caller manage transactions?
+    // Problem: standard `setState` in hook doesn't auto-push history.
+    
+    // Let's just always use `setFlowchart`.
+    // AND: We need to ensure that single-click actions are wrapped in start/commit or use setStateWithHistory.
+    // But `handleNodeUpdate` is called by PropertyPanel for both continuous (input typing) and discrete.
+    
+    // Actually, PropertyPanel inputs for numbers call onNodeEditStart/End.
+    // So those are transactions.
+    // Color picker? Usually discrete change.
+    
+    // Current approach in App.tsx was:
+    // `interactionActiveRef` check.
+    
+    // Let's reimplement `applyImmediateFlowchartUpdate` style logic but using the hook.
+    
+    // We can use a ref to track if we are in an explicit transaction from UI events.
+    // The hook has internal transaction tracking but we need to know whether to call setState or setStateWithHistory.
+    
+    // ACTUALLY: The hook's `startTransaction` just marks the start state.
+    // `commitTransaction` saves the difference.
+    // If we call `setStateWithHistory`, it pushes history immediately.
+    
+    // So:
+    // If we are in a transaction (drag), call `setFlowchart`.
+    // If we are NOT in a transaction (color click), call `setStateWithHistory`.
+    
+    // We need to track transaction state in App component to make this decision.
+    // We can add `isTransactionActive` state or ref in App.
+    
+    // Let's rely on the transaction refs we pass to Canvas/PropertyPanel.
+    // We'll implement wrapper functions for start/end transaction that update a local ref.
+    
+    // See `isTransactionActiveRef` below.
+    
+    if (isTransactionActiveRef.current) {
+        console.log('App: Node Updated in Transaction');
+        setFlowchart(updateNode(flowchartRef.current, nodeId, updates));
+    } else {
+        console.log('App: Node Updated with History');
+        setStateWithHistory(updateNode(flowchartRef.current, nodeId, updates));
+    }
+  }, [flowchartRef, isUndoableNodeUpdate, setFlowchart, setStateWithHistory]);
+
+  // Transaction tracking
+  const isTransactionActiveRef = useRef(false);
+
+  const handleTransactionStart = useCallback(() => {
+    if (isTransactionActiveRef.current) return;
+    isTransactionActiveRef.current = true;
+    startTransaction();
+  }, [startTransaction]);
+
+  const handleTransactionEnd = useCallback(() => {
+    if (!isTransactionActiveRef.current) return;
+    isTransactionActiveRef.current = false;
+    commitTransaction();
+  }, [commitTransaction]);
+
 
   const handleNodeSelect = useCallback((nodeId: string | null) => {
     setSelectedNodeId(nodeId);
@@ -89,50 +239,47 @@ function App() {
         return;
       }
 
-      // Check for duplicate edge before creating
-      setFlowchart((fc) => {
-        const duplicate = fc.edges.some(
-          (e) =>
-            e.sourceNodeId === connectingFrom.nodeId &&
-            e.sourcePointId === connectingFrom.pointId &&
-            e.targetNodeId === nodeId &&
-            e.targetPointId === pointId
+      // Check for duplicate edge
+      const fc = flowchartRef.current;
+      const duplicate = fc.edges.some(
+        (e) =>
+          e.sourceNodeId === connectingFrom.nodeId &&
+          e.sourcePointId === connectingFrom.pointId &&
+          e.targetNodeId === nodeId &&
+          e.targetPointId === pointId
+      );
+
+      if (duplicate) {
+        console.warn('连接已存在，跳过创建');
+        setConnectingFrom(null);
+        return;
+      }
+
+      const sourceExists = fc.nodes.some((n) => n.id === connectingFrom.nodeId);
+      const targetExists = fc.nodes.some((n) => n.id === nodeId);
+
+      if (!sourceExists || !targetExists) {
+        console.error('源节点或目标节点不存在');
+        setConnectingFrom(null);
+        return;
+      }
+
+      try {
+        const newEdge = createEdge(
+          `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          connectingFrom.nodeId,
+          connectingFrom.pointId,
+          nodeId,
+          pointId
         );
-
-        if (duplicate) {
-          // Silently ignore duplicate connections
-          console.warn('连接已存在，跳过创建');
-          return fc;
-        }
-
-        // Validate that nodes exist
-        const sourceExists = fc.nodes.some((n) => n.id === connectingFrom.nodeId);
-        const targetExists = fc.nodes.some((n) => n.id === nodeId);
-
-        if (!sourceExists || !targetExists) {
-          console.error('源节点或目标节点不存在');
-          return fc;
-        }
-
-        // Create and add edge
-        try {
-          const newEdge = createEdge(
-            `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            connectingFrom.nodeId,
-            connectingFrom.pointId,
-            nodeId,
-            pointId
-          );
-          return addEdge(fc, newEdge);
-        } catch (error) {
-          console.error('创建连接失败:', error);
-          return fc;
-        }
-      });
+        setStateWithHistory(addEdge(fc, newEdge));
+      } catch (error) {
+        console.error('创建连接失败:', error);
+      }
 
       setConnectingFrom(null);
     },
-    [connectingFrom]
+    [connectingFrom, flowchartRef, setStateWithHistory]
   );
 
   const handleConnectionCancel = useCallback(() => {
@@ -145,21 +292,38 @@ function App() {
   }, []);
 
   const handleEdgeDelete = useCallback((edgeId: string) => {
-    setFlowchart((fc) => removeEdge(fc, edgeId));
+    setStateWithHistory(removeEdge(flowchartRef.current, edgeId));
     setSelectedEdgeId(null);
-  }, []);
+  }, [flowchartRef, setStateWithHistory]);
 
   const handleEdgeUpdate = useCallback((edgeId: string, updates: Partial<Edge>) => {
-    setFlowchart((fc) => ({
-      ...fc,
-      edges: fc.edges.map((edge) => (edge.id === edgeId ? { ...edge, ...updates } : edge)),
-    }));
-  }, []);
+    const undoable = isUndoableEdgeUpdate(updates);
+    
+    if (!undoable) {
+       setFlowchart({
+        ...flowchartRef.current,
+        edges: flowchartRef.current.edges.map((edge) => (edge.id === edgeId ? { ...edge, ...updates } : edge)),
+      });
+      return;
+    }
+
+    if (isTransactionActive()) {
+        setFlowchart({
+            ...flowchartRef.current,
+            edges: flowchartRef.current.edges.map((edge) => (edge.id === edgeId ? { ...edge, ...updates } : edge)),
+        });
+    } else {
+        setStateWithHistory({
+            ...flowchartRef.current,
+            edges: flowchartRef.current.edges.map((edge) => (edge.id === edgeId ? { ...edge, ...updates } : edge)),
+        });
+    }
+  }, [flowchartRef, isUndoableEdgeUpdate, setFlowchart, setStateWithHistory, isTransactionActive]);
 
   const handleNodeDelete = useCallback((nodeId: string) => {
-    setFlowchart((fc) => removeNode(fc, nodeId));
+    setStateWithHistory(removeNode(flowchartRef.current, nodeId));
     setSelectedNodeId(null);
-  }, []);
+  }, [flowchartRef, setStateWithHistory]);
 
   // File operations
   const handleSave = useCallback(async () => {
@@ -177,14 +341,12 @@ function App() {
     }
 
     try {
-      // Save current view state to flowchart before serializing
       const flowchartWithViewState = {
         ...flowchart,
         viewState: canvasViewStateRef.current || undefined,
       };
       const json = serializeFlowchart(flowchartWithViewState);
       
-      // If we have a current file path, save to it
       if (currentFilePath) {
         const result = await window.electronAPI.saveFileToPath(currentFilePath, json);
         if (result.success) {
@@ -194,22 +356,20 @@ function App() {
           alert('保存文件失败');
         }
       } else if (projectPath) {
-        // If we have a project but no current file, prompt for filename
         const fileName = prompt('请输入文件名（不含扩展名）:', '未命名流程图');
         if (fileName && fileName.trim()) {
           const separator = projectPath.includes('\\') ? '\\' : '/';
           const filePath = projectPath + (projectPath.endsWith('/') || projectPath.endsWith('\\') ? '' : separator) + fileName.trim() + '.json';
-        const result = await window.electronAPI.saveFileToPath(filePath, json);
-        if (result.success && result.path) {
-          setCurrentFilePath(result.path);
-          console.log('File saved:', result.path);
-          alert('文件已保存');
-        } else {
-          alert('保存文件失败');
-        }
+          const result = await window.electronAPI.saveFileToPath(filePath, json);
+          if (result.success && result.path) {
+            setCurrentFilePath(result.path);
+            console.log('File saved:', result.path);
+            alert('文件已保存');
+          } else {
+            alert('保存文件失败');
+          }
         }
       } else {
-        // Use dialog to choose location
         const result = await window.electronAPI.saveFile(json);
         if (result.success && result.path) {
           setCurrentFilePath(result.path);
@@ -225,6 +385,56 @@ function App() {
     }
   }, [flowchart, projectPath, currentFilePath]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const active = document.activeElement as HTMLElement | null;
+      const isEditingText =
+        !!active &&
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          (active as HTMLElement).isContentEditable);
+
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      if (isCtrlOrCmd && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        handleSave();
+        return;
+      }
+
+      if (isCtrlOrCmd && e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        if (isEditingText) return;
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      if (isCtrlOrCmd && (e.key === 'z' || e.key === 'Z')) {
+        if (isEditingText) return;
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (isEditingText) return;
+        if (selectedEdgeId) {
+          e.preventDefault();
+          handleEdgeDelete(selectedEdgeId);
+          return;
+        }
+        if (selectedNodeId) {
+          e.preventDefault();
+          handleNodeDelete(selectedNodeId);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleSave, handleUndo, handleRedo, selectedEdgeId, selectedNodeId, handleEdgeDelete, handleNodeDelete]);
+
   const handleLoad = useCallback(async () => {
     if (!window.electronAPI) {
       alert('Electron API 不可用。正在浏览器模式下运行。');
@@ -235,24 +445,22 @@ function App() {
       const result = await window.electronAPI.loadFile();
       if (result.success && result.data) {
         const loadedFlowchart = deserializeFlowchart(result.data);
+        resetHistory();
         setFlowchart(loadedFlowchart);
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
         if (result.path) {
           setCurrentFilePath(result.path);
-          // Extract project path from file path
           const pathParts = result.path.split(/[/\\]/);
-          pathParts.pop(); // Remove filename
+          pathParts.pop(); 
           const extractedProjectPath = pathParts.join(pathParts[0]?.includes('\\') ? '\\' : '/');
           setProjectPath(extractedProjectPath);
         }
         
-        // Restore view state if available
         if (loadedFlowchart.viewState) {
           canvasViewStateRef.current = loadedFlowchart.viewState;
         }
         
-        // Reset node counter based on loaded nodes
         const maxId = Math.max(...loadedFlowchart.nodes.map(n => {
           const match = n.id.match(/node-(\d+)/);
           return match ? parseInt(match[1], 10) : 0;
@@ -264,12 +472,13 @@ function App() {
       console.error('Failed to load file:', error);
       alert('加载文件失败。请检查文件格式。');
     }
-  }, []);
+  }, [resetHistory, setFlowchart]);
 
   // Project management handlers
   const handleNewProject = useCallback(async () => {
     if (!window.electronAPI) {
       alert('Electron API 不可用。正在浏览器模式下运行。');
+      resetHistory();
       setFlowchart(createFlowchart());
       setSelectedNodeId(null);
       setSelectedEdgeId(null);
@@ -283,6 +492,7 @@ function App() {
       const result = await window.electronAPI.createProjectFolder();
       if (result.success && result.path) {
         setProjectPath(result.path);
+        resetHistory();
         setFlowchart(createFlowchart());
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
@@ -292,7 +502,7 @@ function App() {
       console.error('Failed to create project:', error);
       alert('创建项目失败');
     }
-  }, []);
+  }, [resetHistory, setFlowchart]);
 
   const handleOpenProject = useCallback(async () => {
     if (!window.electronAPI) {
@@ -304,6 +514,7 @@ function App() {
       const result = await window.electronAPI.openProjectFolder();
       if (result.success && result.path) {
         setProjectPath(result.path);
+        resetHistory();
         setFlowchart(createFlowchart());
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
@@ -314,7 +525,7 @@ function App() {
       console.error('Failed to open project:', error);
       alert('打开项目失败');
     }
-  }, []);
+  }, [resetHistory, setFlowchart]);
 
   const handleLoadFile = useCallback(async (filePath: string) => {
     if (!window.electronAPI) {
@@ -323,7 +534,6 @@ function App() {
     }
 
     try {
-      // Auto-save current file before switching (File Explorer behavior)
       if (currentFilePath && currentFilePath !== filePath && window.electronAPI.saveFileToPath) {
         try {
           const flowchartWithViewState = {
@@ -340,17 +550,16 @@ function App() {
       const result = await window.electronAPI.loadFileFromPath(filePath);
       if (result.success && result.data) {
         const loadedFlowchart = deserializeFlowchart(result.data);
+        resetHistory();
         setFlowchart(loadedFlowchart);
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
         setCurrentFilePath(filePath);
         
-        // Restore view state if available
         if (loadedFlowchart.viewState) {
           canvasViewStateRef.current = loadedFlowchart.viewState;
         }
         
-        // Reset node counter based on loaded nodes
         const maxId = Math.max(...loadedFlowchart.nodes.map(n => {
           const match = n.id.match(/node-(\d+)/);
           return match ? parseInt(match[1], 10) : 0;
@@ -361,7 +570,7 @@ function App() {
       console.error('Failed to load file:', error);
       alert('加载文件失败。请检查文件格式。');
     }
-  }, [currentFilePath, flowchart]);
+  }, [currentFilePath, flowchart, resetHistory, setFlowchart]);
 
   const handleSaveFile = useCallback(async (filePath: string, data: string) => {
     if (!window.electronAPI) {
@@ -380,10 +589,8 @@ function App() {
     }
   }, []);
 
-  // Export functions
   const handleExportPNG = useCallback(async () => {
     try {
-      // Calculate bounds of all nodes
       if (flowchart.nodes.length === 0) {
         alert('没有节点可导出');
         return;
@@ -407,9 +614,8 @@ function App() {
       const offsetX = -minX + padding;
       const offsetY = -minY + padding;
 
-      // Create canvas
       const canvas = document.createElement('canvas');
-      const scale = 2; // Higher resolution
+      const scale = 2;
       canvas.width = width * scale;
       canvas.height = height * scale;
       const ctx = canvas.getContext('2d');
@@ -418,14 +624,10 @@ function App() {
         return;
       }
 
-      // Scale for higher resolution
       ctx.scale(scale, scale);
-
-      // Draw background
       ctx.fillStyle = '#f5f5f5';
       ctx.fillRect(0, 0, width, height);
 
-      // Draw edges first (behind nodes)
       flowchart.edges.forEach((edge) => {
         const sourceNode = flowchart.nodes.find((n) => n.id === edge.sourceNodeId);
         const targetNode = flowchart.nodes.find((n) => n.id === edge.targetNodeId);
@@ -453,7 +655,6 @@ function App() {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Draw arrow head
         const angle = Math.atan2(targetY - controlPoint2Y, targetX - controlPoint2X);
         const arrowLength = 10;
         const arrowWidth = 6;
@@ -469,12 +670,10 @@ function App() {
         ctx.fill();
       });
 
-      // Draw nodes
       flowchart.nodes.forEach((node) => {
         const x = node.position.x - node.size.width / 2 + offsetX;
         const y = node.position.y - node.size.height / 2 + offsetY;
 
-        // Draw node background with rounded corners
         ctx.fillStyle = node.backgroundColor;
         ctx.strokeStyle = '#1976d2';
         ctx.lineWidth = 2;
@@ -493,7 +692,6 @@ function App() {
         ctx.fill();
         ctx.stroke();
 
-        // Draw node text (auto-wrap within node width, respects manual newlines)
         ctx.fillStyle = '#333';
         ctx.font = '14px sans-serif';
         ctx.textAlign = 'center';
@@ -510,7 +708,6 @@ function App() {
           const result: string[] = [];
           let current = '';
 
-          // Prefer breaking on spaces, but also handle CJK (no spaces) by falling back to char splitting.
           const tokens = trimmed.includes(' ') ? trimmed.split(/(\s+)/) : Array.from(trimmed);
 
           for (const token of tokens) {
@@ -526,7 +723,6 @@ function App() {
               continue;
             }
 
-            // Single token longer than the width: hard break by characters.
             let chunk = '';
             for (const ch of Array.from(token)) {
               const t = chunk + ch;
@@ -547,7 +743,6 @@ function App() {
         const manualLines = node.text.split('\n');
         const wrappedLines = manualLines.flatMap((l) => wrapLine(l));
 
-        // If there are too many lines to fit, clamp and add ellipsis.
         const maxLines = Math.max(1, Math.floor((node.size.height - 12) / lineHeight));
         let finalLines = wrappedLines;
         if (wrappedLines.length > maxLines) {
@@ -569,7 +764,6 @@ function App() {
 
       const dataURL = canvas.toDataURL('image/png');
 
-      // Get default filename from current file path
       let defaultFileName = 'flowchart.png';
       if (currentFilePath) {
         const pathParts = currentFilePath.split(/[/\\]/);
@@ -581,7 +775,6 @@ function App() {
       }
 
       if (window.electronAPI) {
-        // Update exportImage to accept default filename
         const result = await window.electronAPI.exportImage(dataURL, 'png', defaultFileName);
         if (result.success) {
           alert('PNG 导出成功');
@@ -601,7 +794,6 @@ function App() {
   }, [flowchart, currentFilePath]);
 
   const handleExportSVG = useCallback(async () => {
-    // Generate SVG representation of the flowchart
     const svg = generateSVG(flowchart);
 
     if (window.electronAPI) {
@@ -617,7 +809,6 @@ function App() {
     }
   }, [flowchart]);
 
-  // Generate SVG from flowchart
   const generateSVG = (fc: Flowchart): string => {
     const padding = 50;
     let minX = Infinity,
@@ -640,7 +831,6 @@ function App() {
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`;
     svg += `<rect width="${width}" height="${height}" fill="#f5f5f5"/>`;
 
-    // Draw edges
     fc.edges.forEach((edge) => {
       const sourceNode = fc.nodes.find((n) => n.id === edge.sourceNodeId);
       const targetNode = fc.nodes.find((n) => n.id === edge.targetNodeId);
@@ -669,7 +859,6 @@ function App() {
       <polygon points="0 0, 10 3, 0 6" fill="#666"/>
     </marker></defs>`;
 
-    // Draw nodes
     fc.nodes.forEach((node) => {
       const x = node.position.x - node.size.width / 2 + offsetX;
       const y = node.position.y - node.size.height / 2 + offsetY;
@@ -700,6 +889,10 @@ function App() {
   return (
     <div className="appShell">
       <Toolbar
+        onUndo={handleUndo}
+        canUndo={canUndo}
+        onRedo={handleRedo}
+        canRedo={canRedo}
         onAddNode={handleAddNode}
         onSave={handleSave}
         onLoad={handleLoad}
@@ -744,6 +937,8 @@ function App() {
             }}
             initialViewState={canvasViewStateRef.current || undefined}
             canvasRef={canvasRef}
+            onNodeInteractionStart={handleTransactionStart}
+            onNodeInteractionEnd={handleTransactionEnd}
           />
         </div>
         <div className="paneRight">
@@ -754,6 +949,8 @@ function App() {
             onNodeDelete={handleNodeDelete}
             onEdgeUpdate={handleEdgeUpdate}
             onEdgeDelete={handleEdgeDelete}
+            onNodeEditStart={handleTransactionStart}
+            onNodeEditEnd={handleTransactionEnd}
           />
         </div>
       </div>
@@ -762,4 +959,3 @@ function App() {
 }
 
 export default App;
-

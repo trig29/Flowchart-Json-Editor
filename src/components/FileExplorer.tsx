@@ -3,7 +3,7 @@
  * Shows project folder structure with flowchart files
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { serializeFlowchart, createFlowchart } from '../models/flowchart';
 
 interface FileItem {
@@ -54,6 +54,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const [renameDialog, setRenameDialog] = useState<{ item: FileItem } | null>(null);
   const [renameName, setRenameName] = useState('');
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null);
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const lastBackupAtRef = useRef<number>(0);
 
   // Load file tree when project path changes
   useEffect(() => {
@@ -63,6 +65,42 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       setFileTree([]);
     }
   }, [projectPath]);
+
+  const runBackup = useCallback(
+    async (silent: boolean) => {
+      if (!projectPath) return;
+      if (!window.electronAPI?.backupProject) {
+        if (!silent) alert('Electron API 不可用');
+        return;
+      }
+      if (isBackingUp) return;
+
+      setIsBackingUp(true);
+      try {
+        const result = await window.electronAPI.backupProject(projectPath);
+        if (result.success && result.path) {
+          lastBackupAtRef.current = Date.now();
+          if (!silent) alert(`备份成功：${result.path}`);
+        } else if (!silent) {
+          alert(`备份失败：${result.error || '未知错误'}`);
+        }
+      } finally {
+        setIsBackingUp(false);
+      }
+    },
+    [projectPath, isBackingUp]
+  );
+
+  // Auto backup every 5 minutes (silent)
+  useEffect(() => {
+    if (!projectPath) return;
+    const interval = window.setInterval(() => {
+      // Avoid backing up too frequently if user clicks manual backup
+      if (Date.now() - lastBackupAtRef.current < 60_000) return;
+      runBackup(true);
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, [projectPath, runBackup]);
 
   // Close context menu when clicking outside
   useEffect(() => {
@@ -426,6 +464,15 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           </button>
           <button className="vsBtn vsBtnIcon" title="打开文件夹" onClick={onOpenProject}>
             📂
+          </button>
+          <button
+            className="vsBtn vsBtnIcon"
+            title={isBackingUp ? '备份中...' : '备份当前文件夹（打包为 zip 到 backups/）'}
+            onClick={() => runBackup(false)}
+            disabled={isBackingUp}
+            style={{ opacity: isBackingUp ? 0.6 : 1, cursor: isBackingUp ? 'not-allowed' : 'pointer' }}
+          >
+            ⬇
           </button>
         </div>
       </div>

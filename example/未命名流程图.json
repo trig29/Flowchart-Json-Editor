@@ -1,0 +1,42 @@
+{
+  "nodes": [
+    {
+      "id": "node-1",
+      "position": {
+        "x": 470.7819432388118,
+        "y": 567.9012722439235
+      },
+      "size": {
+        "width": 298.14814814814815,
+        "height": 203.45679012345676
+      },
+      "text": "]\\",
+      "backgroundColor": "#e3f2fd",
+      "connectionPoints": [
+        {
+          "id": "node-1-input",
+          "type": "input",
+          "position": {
+            "x": 0,
+            "y": -101.72839506172838
+          }
+        },
+        {
+          "id": "node-1-output",
+          "type": "output",
+          "position": {
+            "x": 0,
+            "y": 101.72839506172838
+          }
+        }
+      ]
+    }
+  ],
+  "edges": [],
+  "metadata": {},
+  "viewState": {
+    "x": -154,
+    "y": -37.333343505859375,
+    "scale": 0.7938810000000003
+  }
+}

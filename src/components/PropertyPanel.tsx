@@ -12,6 +12,8 @@ interface PropertyPanelProps {
   onNodeDelete: (nodeId: string) => void;
   onEdgeUpdate: (edgeId: string, updates: Partial<Edge>) => void;
   onEdgeDelete: (edgeId: string) => void;
+  onNodeEditStart?: () => void;
+  onNodeEditEnd?: () => void;
 }
 
 export const PropertyPanel: React.FC<PropertyPanelProps> = ({
@@ -21,6 +23,8 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
   onNodeDelete,
   onEdgeUpdate,
   onEdgeDelete,
+  onNodeEditStart,
+  onNodeEditEnd,
 }) => {
   const [textAreaHeight, setTextAreaHeight] = useState(80);
 
@@ -51,7 +55,11 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
             ].map((colorOption) => (
               <button
                 key={colorOption.color}
-                onClick={() => onEdgeUpdate(edge.id, { color: colorOption.color })}
+                onClick={() => {
+                  const current = edge.color || '#666';
+                  if (current === colorOption.color) return;
+                  onEdgeUpdate(edge.id, { color: colorOption.color });
+                }}
                 style={{
                   flex: '1 1 calc(25% - 6px)',
                   minWidth: '60px',
@@ -168,7 +176,10 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
             ].map((colorOption) => (
               <button
                 key={colorOption.color}
-                onClick={() => onNodeUpdate(node.id, { backgroundColor: colorOption.color })}
+                onClick={() => {
+                  if (node.backgroundColor === colorOption.color) return;
+                  onNodeUpdate(node.id, { backgroundColor: colorOption.color });
+                }}
                 style={{
                   flex: '1 1 calc(25% - 6px)',
                   minWidth: '60px',
@@ -193,8 +204,14 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
             type="number"
             value={node.size.width}
             onChange={(e) =>
-              onNodeUpdate(node.id, { size: { ...node.size, width: parseInt(e.target.value) || 150 } })
+              (() => {
+                const nextWidth = parseInt(e.target.value, 10) || 150;
+                if (nextWidth === node.size.width) return;
+                onNodeUpdate(node.id, { size: { ...node.size, width: nextWidth } });
+              })()
             }
+            onFocus={() => onNodeEditStart?.()}
+            onBlur={() => onNodeEditEnd?.()}
             min="50"
             max="500"
             style={{
@@ -215,8 +232,14 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
             type="number"
             value={node.size.height}
             onChange={(e) =>
-              onNodeUpdate(node.id, { size: { ...node.size, height: parseInt(e.target.value) || 80 } })
+              (() => {
+                const nextHeight = parseInt(e.target.value, 10) || 80;
+                if (nextHeight === node.size.height) return;
+                onNodeUpdate(node.id, { size: { ...node.size, height: nextHeight } });
+              })()
             }
+            onFocus={() => onNodeEditStart?.()}
+            onBlur={() => onNodeEditEnd?.()}
             min="50"
             max="500"
             style={{

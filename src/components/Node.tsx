@@ -17,6 +17,8 @@ interface NodeComponentProps {
   connectingFrom: { nodeId: string; pointId: string } | null;
   canvasTransform?: { x: number; y: number; scale: number };
   canvasRef?: React.RefObject<HTMLDivElement>;
+  onInteractionStart?: (type: 'move' | 'resize') => void;
+  onInteractionEnd?: () => void;
 }
 
 type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | null;
@@ -32,6 +34,8 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
   connectingFrom,
   canvasTransform = { x: 0, y: 0, scale: 1 },
   canvasRef,
+  onInteractionStart,
+  onInteractionEnd,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<Position>({ x: 0, y: 0 });
@@ -60,6 +64,7 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
           // Start resizing
           setIsResizing(true);
           setResizeHandle(target.dataset.resizeHandle as ResizeHandle);
+          onInteractionStart?.('resize');
           setResizeStart({
             pos: { x: e.clientX, y: e.clientY },
             size: { width: node.size.width, height: node.size.height },
@@ -72,12 +77,14 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
             const canvasX = (e.clientX - rect.left - canvasTransform.x) / canvasTransform.scale;
             const canvasY = (e.clientY - rect.top - canvasTransform.y) / canvasTransform.scale;
             setIsDragging(true);
+            onInteractionStart?.('move');
             setDragStart({
               x: canvasX - node.position.x,
               y: canvasY - node.position.y,
             });
           } else {
             setIsDragging(true);
+            onInteractionStart?.('move');
             setDragStart({
               x: e.clientX - node.position.x,
               y: e.clientY - node.position.y,
@@ -212,9 +219,13 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
       };
 
       const handleGlobalMouseUp = () => {
-        setIsDragging(false);
-        setIsResizing(false);
-        setResizeHandle(null);
+        try {
+            setIsDragging(false);
+            setIsResizing(false);
+            setResizeHandle(null);
+        } finally {
+            onInteractionEnd?.();
+        }
       };
 
       window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -428,5 +439,3 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
     </div>
   );
 };
-
-
