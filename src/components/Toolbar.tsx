@@ -5,7 +5,6 @@
 import React from 'react';
 
 interface ToolbarProps {
-  onAddNode: () => void;
   onUndo: () => void;
   canUndo: boolean;
   onRedo: () => void;
@@ -18,7 +17,6 @@ interface ToolbarProps {
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
-  onAddNode,
   onUndo,
   canUndo,
   onRedo,
@@ -33,13 +31,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
   return (
     <div className="topBar">
-      <button
-        onClick={onAddNode}
-        className="vsBtn vsBtnPrimary"
-      >
-        添加节点
-      </button>
-
       <button
         onClick={onUndo}
         className="vsBtn vsBtnIcon"

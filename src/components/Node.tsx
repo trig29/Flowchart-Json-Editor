@@ -5,6 +5,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { Node, Position, ConnectionPoint } from '../models/types';
+import { getNodeDisplayText, getTagLabel } from '../models/nodeTag';
 
 interface NodeComponentProps {
   node: Node;
@@ -52,6 +53,7 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
   });
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(node.text);
+  const displayText = getNodeDisplayText(node);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -114,10 +116,11 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      if (node.tag === 'choiceFlag' || node.tag === 'root') return;
       setIsEditing(true);
       setEditText(node.text);
     },
-    [node.text]
+    [node.tag, node.text]
   );
 
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -273,6 +276,30 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
       onMouseUp={handleMouseUp}
       onDoubleClick={handleDoubleClick}
     >
+      {/* Tag badge */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 6,
+          left: 8,
+          fontSize: 11,
+          fontWeight: 700,
+          color: 'rgba(0,0,0,0.6)',
+          background: 'rgba(255,255,255,0.55)',
+          border: '1px solid rgba(0,0,0,0.08)',
+          borderRadius: 6,
+          padding: '2px 6px',
+          pointerEvents: 'none',
+          maxWidth: 'calc(100% - 16px)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+        title={getTagLabel(node.tag)}
+      >
+        {getTagLabel(node.tag)}
+      </div>
+
       {/* Resize handles - only show when selected */}
       {isSelected && (
         <>
@@ -427,12 +454,29 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
               justifyContent: 'center',
             }}
           >
-            {node.text.split('\n').map((line, index, array) => (
-              <React.Fragment key={index}>
-                {line}
-                {index < array.length - 1 && <br />}
-              </React.Fragment>
-            ))}
+            {node.tag === 'dialogue' ? (
+              <div style={{ width: '100%' }}>
+                <div style={{ fontWeight: 800 }}>
+                  {(node.actor ?? '') + '：'}
+                </div>
+                <br />
+                <div style={{ fontWeight: 500 }}>
+                  {(node.text || '').split('\n').map((line, index, array) => (
+                    <React.Fragment key={index}>
+                      {line}
+                      {index < array.length - 1 && <br />}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              displayText.split('\n').map((line, index, array) => (
+                <React.Fragment key={index}>
+                  {line}
+                  {index < array.length - 1 && <br />}
+                </React.Fragment>
+              ))
+            )}
           </div>
         )}
       </div>

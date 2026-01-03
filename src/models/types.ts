@@ -24,6 +24,12 @@ export interface ConnectionPoint {
 }
 
 /**
+ * Node tag (type) for story authoring.
+ * Color in UI represents the tag.
+ */
+export type NodeTag = 'root' | 'dialogue' | 'option' | 'choiceFlag' | 'comment';
+
+/**
  * Node in the flowchart
  * Designed to be extensible for narrative events and game logic
  */
@@ -31,7 +37,22 @@ export interface Node {
   id: string;
   position: Position;
   size: Size;
+  tag: NodeTag;
+  /**
+   * For `dialogue` nodes, this is the line content (supports newlines).
+   * For other tags, this is the main content (supports newlines).
+   */
   text: string;
+  /**
+   * Dialogue speaker name. Only meaningful when tag === 'dialogue'.
+   * Single-line input in UI.
+   */
+  actor?: string;
+  /**
+   * For `choiceFlag` nodes, store how many child nodes it currently has.
+   * This value is derived from outgoing edges and should be kept in sync.
+   */
+  childCount?: number;
   backgroundColor: string;
   connectionPoints: ConnectionPoint[];
   // Future extensibility: metadata for narrative events, conditions, etc.

@@ -16,12 +16,14 @@ import {
   removeEdge,
   serializeFlowchart,
   deserializeFlowchart,
+  applyDerivedFlowchart,
 } from './models/flowchart';
 import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { PropertyPanel } from './components/PropertyPanel';
 import { FileExplorer } from './components/FileExplorer';
 import { useUndoRedo } from './hooks/useUndoRedo';
+import { getNodeDisplayText } from './models/nodeTag';
 
 function App() {
   const {
@@ -69,6 +71,7 @@ function App() {
   const isUndoableNodeUpdate = (updates: Partial<Node>): boolean => {
     // Only: move/resize/backgroundColor are undoable. Text is not undoable.
     if ('backgroundColor' in updates) return true;
+    if ('tag' in updates) return true;
     if ('size' in updates) return true;
     if ('position' in updates) return true;
     if ('connectionPoints' in updates) return true;
@@ -101,7 +104,7 @@ function App() {
       { x: centerX, y: centerY },
       { width: 150, height: 80 }
     );
-    setStateWithHistory(addNode(flowchartRef.current, newNode));
+    setStateWithHistory(applyDerivedFlowchart(addNode(flowchartRef.current, newNode)));
   }, [flowchartRef, setStateWithHistory]);
 
   const handleNodeMove = useCallback((nodeId: string, position: Position) => {
@@ -110,6 +113,17 @@ function App() {
   }, [flowchartRef, setFlowchart]);
 
   const handleNodeUpdate = useCallback((nodeId: string, updates: Partial<Node>) => {
+    // Root node is read-only except position/size/connectionPoints (allow move/resize).
+    const currentNode = flowchartRef.current.nodes.find((n) => n.id === nodeId);
+    if (currentNode?.tag === 'root') {
+      const safeUpdates: Partial<Node> = {};
+      if (updates.position) safeUpdates.position = updates.position;
+      if (updates.size) safeUpdates.size = updates.size;
+      if (updates.connectionPoints) safeUpdates.connectionPoints = updates.connectionPoints;
+      // Ignore any other changes (tag/text/actor/backgroundColor/etc.)
+      updates = safeUpdates;
+    }
+
     const undoable = isUndoableNodeUpdate(updates);
     
     // Text-only edits are not undoable
@@ -202,7 +216,7 @@ function App() {
         setFlowchart(updateNode(flowchartRef.current, nodeId, updates));
     } else {
         console.log('App: Node Updated with History');
-        setStateWithHistory(updateNode(flowchartRef.current, nodeId, updates));
+        setStateWithHistory(applyDerivedFlowchart(updateNode(flowchartRef.current, nodeId, updates)));
     }
   }, [flowchartRef, isUndoableNodeUpdate, setFlowchart, setStateWithHistory]);
 
@@ -272,7 +286,7 @@ function App() {
           nodeId,
           pointId
         );
-        setStateWithHistory(addEdge(fc, newEdge));
+        setStateWithHistory(applyDerivedFlowchart(addEdge(fc, newEdge)));
       } catch (error) {
         console.error('创建连接失败:', error);
       }
@@ -292,7 +306,7 @@ function App() {
   }, []);
 
   const handleEdgeDelete = useCallback((edgeId: string) => {
-    setStateWithHistory(removeEdge(flowchartRef.current, edgeId));
+    setStateWithHistory(applyDerivedFlowchart(removeEdge(flowchartRef.current, edgeId)));
     setSelectedEdgeId(null);
   }, [flowchartRef, setStateWithHistory]);
 
@@ -321,7 +335,9 @@ function App() {
   }, [flowchartRef, isUndoableEdgeUpdate, setFlowchart, setStateWithHistory, isTransactionActive]);
 
   const handleNodeDelete = useCallback((nodeId: string) => {
-    setStateWithHistory(removeNode(flowchartRef.current, nodeId));
+    const n = flowchartRef.current.nodes.find((x) => x.id === nodeId);
+    if (n?.tag === 'root') return;
+    setStateWithHistory(applyDerivedFlowchart(removeNode(flowchartRef.current, nodeId)));
     setSelectedNodeId(null);
   }, [flowchartRef, setStateWithHistory]);
 
@@ -425,6 +441,8 @@ function App() {
           return;
         }
         if (selectedNodeId) {
+          const n = flowchartRef.current.nodes.find((x) => x.id === selectedNodeId);
+          if (n?.tag === 'root') return;
           e.preventDefault();
           handleNodeDelete(selectedNodeId);
         }
@@ -740,7 +758,7 @@ function App() {
           return result.length ? result : [''];
         };
 
-        const manualLines = node.text.split('\n');
+        const manualLines = getNodeDisplayText(node).split('\n');
         const wrappedLines = manualLines.flatMap((l) => wrapLine(l));
 
         const maxLines = Math.max(1, Math.floor((node.size.height - 12) / lineHeight));
@@ -864,9 +882,10 @@ function App() {
       const y = node.position.y - node.size.height / 2 + offsetY;
       svg += `<rect x="${x}" y="${y}" width="${node.size.width}" height="${node.size.height}" 
         fill="${node.backgroundColor}" stroke="#1976d2" stroke-width="2" rx="8"/>`;
+      const nodeText = getNodeDisplayText(node).replace(/\n/g, ' ');
       svg += `<text x="${node.position.x + offsetX}" y="${node.position.y + offsetY}" 
         text-anchor="middle" dominant-baseline="middle" font-size="14" font-weight="500" fill="#333">${escapeXML(
-        node.text
+        nodeText
       )}</text>`;
     });
 
@@ -893,7 +912,6 @@ function App() {
         canUndo={canUndo}
         onRedo={handleRedo}
         canRedo={canRedo}
-        onAddNode={handleAddNode}
         onSave={handleSave}
         onLoad={handleLoad}
         onExportPNG={handleExportPNG}
@@ -940,6 +958,17 @@ function App() {
             onNodeInteractionStart={handleTransactionStart}
             onNodeInteractionEnd={handleTransactionEnd}
           />
+          <button
+            className="fabAddNode"
+            title="添加节点"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAddNode();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            +
+          </button>
         </div>
         <div className="paneRight">
           <PropertyPanel
@@ -949,8 +978,6 @@ function App() {
             onNodeDelete={handleNodeDelete}
             onEdgeUpdate={handleEdgeUpdate}
             onEdgeDelete={handleEdgeDelete}
-            onNodeEditStart={handleTransactionStart}
-            onNodeEditEnd={handleTransactionEnd}
           />
         </div>
       </div>

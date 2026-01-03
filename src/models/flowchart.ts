@@ -4,16 +4,97 @@
  */
 
 import { Flowchart, Node, Edge, Position, Size, ConnectionPoint } from './types';
+import { getTagColor, normalizeNode } from './nodeTag';
+
+function createRootNode(existingIds: Set<string> = new Set()): Node {
+  const preferredId = 'root';
+  const id = existingIds.has(preferredId) ? 'root-node' : preferredId;
+  const size: Size = { width: 180, height: 80 };
+  return {
+    id,
+    position: { x: 400, y: 200 },
+    size,
+    tag: 'root',
+    text: '对话开始',
+    actor: undefined,
+    childCount: undefined,
+    backgroundColor: getTagColor('root'),
+    connectionPoints: [
+      { id: `${id}-input`, type: 'input', position: { x: 0, y: -size.height / 2 } },
+      { id: `${id}-output`, type: 'output', position: { x: 0, y: size.height / 2 } },
+    ],
+  };
+}
+
+function ensureSingleRoot(flowchart: Flowchart): Flowchart {
+  const roots = flowchart.nodes.filter((n) => n.tag === 'root');
+  if (roots.length === 1) return flowchart;
+
+  const ids = new Set(flowchart.nodes.map((n) => n.id));
+
+  // No root: add one at the start.
+  if (roots.length === 0) {
+    return { ...flowchart, nodes: [createRootNode(ids), ...flowchart.nodes] };
+  }
+
+  // Multiple roots: keep the first, downgrade others to dialogue nodes.
+  let kept = false;
+  const nodes = flowchart.nodes.map((n) => {
+    if (n.tag !== 'root') return n;
+    if (!kept) {
+      kept = true;
+      return { ...n, text: '对话开始', actor: undefined, childCount: undefined, backgroundColor: getTagColor('root') };
+    }
+    return { ...n, tag: 'dialogue', actor: '', backgroundColor: getTagColor('dialogue') };
+  });
+
+  return { ...flowchart, nodes };
+}
+
+export function applyDerivedFlowchart(flowchart: Flowchart): Flowchart {
+  const withRoot = ensureSingleRoot(flowchart);
+  const outgoingCounts = new Map<string, number>();
+  for (const e of withRoot.edges) {
+    outgoingCounts.set(e.sourceNodeId, (outgoingCounts.get(e.sourceNodeId) || 0) + 1);
+  }
+
+  const nodes: Node[] = withRoot.nodes.map((n) => {
+    const tag = n.tag || 'dialogue';
+    const base: Node = { ...n, tag, backgroundColor: getTagColor(tag) };
+    if (tag === 'root') {
+      return {
+        ...base,
+        text: '对话开始',
+        actor: undefined,
+        childCount: undefined,
+      };
+    }
+    if (tag === 'choiceFlag') {
+      return {
+        ...base,
+        text: '',
+        actor: undefined,
+        childCount: outgoingCounts.get(n.id) || 0,
+      };
+    }
+    return {
+      ...base,
+      childCount: undefined,
+    };
+  });
+
+  return { ...withRoot, nodes };
+}
 
 /**
  * Create a new empty flowchart
  */
 export function createFlowchart(): Flowchart {
-  return {
-    nodes: [],
+  return applyDerivedFlowchart({
+    nodes: [createRootNode()],
     edges: [],
     metadata: {},
-  };
+  });
 }
 
 /**
@@ -28,8 +109,10 @@ export function createNode(
     id,
     position,
     size,
+    tag: 'dialogue',
     text: '新节点',
-    backgroundColor: '#e3f2fd',
+    actor: '',
+    backgroundColor: getTagColor('dialogue'),
     connectionPoints: [
       { id: `${id}-input`, type: 'input', position: { x: 0, y: -size.height / 2 } },
       { id: `${id}-output`, type: 'output', position: { x: 0, y: size.height / 2 } },
@@ -157,10 +240,14 @@ export function deserializeFlowchart(json: string): Flowchart {
   if (!data.edges || !Array.isArray(data.edges)) {
     throw new Error('Invalid flowchart format: missing edges array');
   }
-  return {
-    nodes: data.nodes,
+
+  // Normalize nodes for backward compatibility (older files may not have tag/actor)
+  const nodes: Node[] = data.nodes.map((n: Partial<Node>) => normalizeNode(n));
+
+  return applyDerivedFlowchart({
+    nodes,
     edges: data.edges,
     metadata: data.metadata || {},
-  };
+  });
 }
 

@@ -85,6 +85,36 @@ button:active {
   background: var(--vscode-bg);
 }
 
+/* Floating action button: add node (bottom-right of canvas area) */
+.fabAddNode {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: var(--vscode-accent);
+  color: #fff;
+  font-size: 28px;
+  line-height: 46px;
+  font-weight: 700;
+  cursor: pointer;
+  z-index: 50;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fabAddNode:hover {
+  background: #0086d6;
+}
+
+.fabAddNode:active {
+  transform: translateY(1px);
+}
+
 .paneRight {
   width: 320px;
   min-width: 280px;

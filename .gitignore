@@ -37,3 +37,6 @@ Desktop.ini
 ## TypeScript
 *.tsbuildinfo
 
+## Example
+example/
+
