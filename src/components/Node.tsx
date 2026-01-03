@@ -231,12 +231,20 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
         }
       };
 
+      const handleWindowBlur = () => {
+        // If focus is lost (dialogs, alt-tab), mouseup might not fire.
+        // Ensure we don't stay stuck in dragging/resizing state.
+        handleGlobalMouseUp();
+      };
+
       window.addEventListener('mousemove', handleGlobalMouseMove);
       window.addEventListener('mouseup', handleGlobalMouseUp);
+      window.addEventListener('blur', handleWindowBlur);
 
       return () => {
         window.removeEventListener('mousemove', handleGlobalMouseMove);
         window.removeEventListener('mouseup', handleGlobalMouseUp);
+        window.removeEventListener('blur', handleWindowBlur);
       };
     }
   }, [isDragging, isResizing, resizeHandle, dragStart, resizeStart, canvasTransform, canvasRef, onMove, onUpdate, node.connectionPoints]);

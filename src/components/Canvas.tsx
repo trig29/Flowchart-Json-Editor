@@ -69,6 +69,20 @@ export const Canvas: React.FC<CanvasProps> = ({
   const panStartClientRef = useRef<Position>({ x: 0, y: 0 });
   const panStartTransformRef = useRef<{ x: number; y: number; scale: number }>({ x: 0, y: 0, scale: 1 });
 
+  const cancelPan = useCallback(() => {
+    const pid = panPointerIdRef.current;
+    panPointerIdRef.current = null;
+    setIsPanning(false);
+    // Best-effort release pointer capture if it is still held.
+    if (pid != null) {
+      try {
+        canvasRef.current?.releasePointerCapture(pid);
+      } catch {
+        // ignore
+      }
+    }
+  }, [canvasRef]);
+
   // Update transform when initialViewState changes (e.g., after loading)
   React.useEffect(() => {
     if (initialViewState) {
@@ -136,6 +150,21 @@ export const Canvas: React.FC<CanvasProps> = ({
       // ignore
     }
   }, []);
+
+  // If the app loses focus (dialogs, alt-tab), pointerup might never fire.
+  // Make sure panning doesn't stay "stuck" and block subsequent interactions.
+  useEffect(() => {
+    const onBlur = () => cancelPan();
+    window.addEventListener('blur', onBlur);
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') cancelPan();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [cancelPan]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
@@ -230,6 +259,9 @@ export const Canvas: React.FC<CanvasProps> = ({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onLostPointerCapture={() => {
+        cancelPan();
+      }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       style={{
