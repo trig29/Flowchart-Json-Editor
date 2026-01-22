@@ -320,8 +320,9 @@ ipcMain.handle('backup-project', async (_, projectPath: string) => {
 
     archive.pipe(output);
 
-    // Exclude backups itself and typical build/dev folders
-    archive.glob('**/*', {
+    // Only backup JSON files to keep archive size small.
+    // Still exclude backups itself and typical build/dev folders.
+    archive.glob('**/*.json', {
       cwd: projectPath,
       dot: true,
       follow: false,
