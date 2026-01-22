@@ -4,7 +4,7 @@
  */
 
 import { Flowchart, Node, Edge, Position, Size, ConnectionPoint } from './types';
-import { getTagColor, normalizeNode } from './nodeTag';
+import { getTagColor, normalizeNode, getNodeDisplayText } from './nodeTag';
 
 function createRootNode(existingIds: Set<string> = new Set()): Node {
   const preferredId = 'root';
@@ -249,5 +249,134 @@ export function deserializeFlowchart(json: string): Flowchart {
     edges: data.edges,
     metadata: data.metadata || {},
   });
+}
+
+/**
+ * Calculate the required height for a node based on its text content
+ * This function measures text with word wrapping and returns the minimum height needed
+ * Usage: Call this when node text or width changes to determine if height adjustment is needed
+ */
+export function calculateNodeHeight(node: Node): number {
+  // Constants matching the rendering styles
+  const FONT_SIZE = 14;
+  const LINE_HEIGHT = 18;
+  const PADDING = 8; // Top and bottom padding
+  const TAG_AREA_HEIGHT = 30; // Space for tag badge at top
+  const MIN_HEIGHT = 50; // Minimum node height
+  
+  // Check if we're in a browser environment
+  if (typeof document === 'undefined') {
+    return Math.max(MIN_HEIGHT, node.size.height);
+  }
+  
+  // Available width for text (node width minus left/right padding)
+  const availableWidth = Math.max(20, node.size.width - PADDING * 2);
+  
+  // Create a temporary canvas to measure text width
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    // Fallback: estimate based on text length
+    const displayText = getNodeDisplayText(node);
+    const estimatedLines = Math.max(1, Math.ceil(displayText.length / 20));
+    return Math.max(MIN_HEIGHT, TAG_AREA_HEIGHT + estimatedLines * LINE_HEIGHT + PADDING * 2);
+  }
+  
+  ctx.font = `${FONT_SIZE}px sans-serif`;
+  
+  // Get the display text (handles dialogue actor + text, choiceFlag count, etc.)
+  const displayText = getNodeDisplayText(node);
+  
+  // Split by manual line breaks first
+  const manualLines = displayText.split('\n');
+  let totalLines = 0;
+  
+  for (const line of manualLines) {
+    if (!line.trim()) {
+      totalLines += 1; // Empty line still takes space
+      continue;
+    }
+    
+    // Measure text width and calculate how many wrapped lines are needed
+    const words = line.includes(' ') ? line.split(/(\s+)/) : Array.from(line);
+    let currentLine = '';
+    
+    for (const word of words) {
+      const testLine = currentLine + word;
+      const metrics = ctx.measureText(testLine);
+      
+      if (metrics.width <= availableWidth) {
+        currentLine = testLine;
+      } else {
+        // Current line is full, start a new line
+        if (currentLine.trim().length > 0) {
+          totalLines += 1;
+          currentLine = word.trimStart();
+        } else {
+          // Word itself is too long, break it character by character
+          for (const char of Array.from(word)) {
+            const testChar = currentLine + char;
+            const charMetrics = ctx.measureText(testChar);
+            if (charMetrics.width <= availableWidth) {
+              currentLine = testChar;
+            } else {
+              if (currentLine.length > 0) {
+                totalLines += 1;
+              }
+              currentLine = char;
+            }
+          }
+        }
+      }
+    }
+    
+    // Add the last line
+    if (currentLine.length > 0) {
+      totalLines += 1;
+    }
+  }
+  
+  // Ensure at least one line
+  if (totalLines === 0) {
+    totalLines = 1;
+  }
+  
+  // Calculate total height
+  const textHeight = totalLines * LINE_HEIGHT;
+  const totalHeight = TAG_AREA_HEIGHT + textHeight + PADDING * 2;
+  
+  return Math.max(MIN_HEIGHT, totalHeight);
+}
+
+/**
+ * Auto-adjust node height based on text content
+ * Returns updated node with adjusted height if needed
+ */
+export function autoAdjustNodeHeight(node: Node): Node {
+  const requiredHeight = calculateNodeHeight(node);
+  
+  // Only adjust if current height is less than required
+  if (node.size.height < requiredHeight) {
+    const heightDiff = requiredHeight - node.size.height;
+    
+    // Update connection points to maintain their position relative to node center
+    const updatedConnectionPoints = node.connectionPoints.map((p) => {
+      if (p.type === 'input') {
+        return { ...p, position: { x: 0, y: -requiredHeight / 2 } };
+      }
+      if (p.type === 'output') {
+        return { ...p, position: { x: 0, y: requiredHeight / 2 } };
+      }
+      return p;
+    });
+    
+    return {
+      ...node,
+      size: { ...node.size, height: requiredHeight },
+      connectionPoints: updatedConnectionPoints,
+    };
+  }
+  
+  return node;
 }
 

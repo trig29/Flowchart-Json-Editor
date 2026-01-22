@@ -6,6 +6,7 @@
 import React, { useState, useCallback } from 'react';
 import { Node, Position, ConnectionPoint } from '../models/types';
 import { getNodeDisplayText, getTagLabel } from '../models/nodeTag';
+import { autoAdjustNodeHeight } from '../models/flowchart';
 
 interface NodeComponentProps {
   node: Node;
@@ -130,9 +131,18 @@ export const NodeComponent: React.FC<NodeComponentProps> = ({
   const handleTextBlur = useCallback(() => {
     setIsEditing(false);
     if (editText !== node.text) {
-      onUpdate({ text: editText });
+      // Update text first
+      const updatedNode = { ...node, text: editText };
+      // Auto-adjust height based on new text
+      const adjustedNode = autoAdjustNodeHeight(updatedNode);
+      // Send update with both text and potentially adjusted size
+      onUpdate({
+        text: editText,
+        size: adjustedNode.size,
+        connectionPoints: adjustedNode.connectionPoints,
+      });
     }
-  }, [editText, node.text, onUpdate]);
+  }, [editText, node, onUpdate]);
 
 
   const handleConnectionPointClick = useCallback(

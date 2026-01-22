@@ -14,7 +14,7 @@ export const NODE_TAGS: NodeTagDef[] = [
   { tag: 'comment', label: '注释', color: '#F3E5F5' },
 ];
 
-export const NODE_TAGS_SELECTABLE: NodeTagDef[] = NODE_TAGS.filter((t) => t.tag !== 'root');
+export const NODE_TAGS_SELECTABLE: NodeTagDef[] = NODE_TAGS.filter((t) => t.tag !== 'root' && t.tag !== 'choiceFlag');
 
 export function getNodeTagDef(tag: NodeTag): NodeTagDef {
   const found = NODE_TAGS.find((t) => t.tag === tag);

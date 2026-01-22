@@ -215,9 +215,23 @@ export const Canvas: React.FC<CanvasProps> = ({
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const canvasElement = canvasRef.current;
+      if (!canvasElement) return;
+      const rect = canvasElement.getBoundingClientRect();
+      // 视窗中心点（屏幕坐标）
+      const centerScreenX = rect.left + rect.width / 2;
+      const centerScreenY = rect.top + rect.height / 2;
       setTransform((prev) => {
         const newScale = Math.max(0.1, Math.min(3, prev.scale * delta));
-        return { ...prev, scale: newScale };
+        // 缩放前视窗中心对应的画布坐标
+        const before = {
+          x: (centerScreenX - rect.left - prev.x) / prev.scale,
+          y: (centerScreenY - rect.top - prev.y) / prev.scale,
+        };
+        // 缩放后应调整的偏移量，使视窗中心内容保持不变
+        const newX = centerScreenX - rect.left - before.x * newScale;
+        const newY = centerScreenY - rect.top - before.y * newScale;
+        return { ...prev, scale: newScale, x: newX, y: newY };
       });
     };
 

@@ -2,9 +2,10 @@
  * Property panel for editing selected node and edge properties
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Node, Edge, NodeTag } from '../models/types';
 import { NODE_TAGS, NODE_TAGS_SELECTABLE, getTagColor } from '../models/nodeTag';
+import { autoAdjustNodeHeight } from '../models/flowchart';
 
 interface PropertyPanelProps {
   node: Node | null;
@@ -24,6 +25,20 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
   onEdgeDelete,
 }) => {
   const [textAreaHeight, setTextAreaHeight] = useState(80);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  
+  // Initialize textarea height when node changes
+  useEffect(() => {
+    if (node && textareaRef.current && node.tag !== 'root' && node.tag !== 'choiceFlag') {
+      const textarea = textareaRef.current;
+      // Temporarily set height to auto to measure scrollHeight
+      textarea.style.height = 'auto';
+      const scrollHeight = textarea.scrollHeight;
+      const newHeight = Math.max(80, Math.min(300, scrollHeight));
+      textarea.style.height = `${newHeight}px`;
+      setTextAreaHeight(newHeight);
+    }
+  }, [node?.id]); // Only re-run when node ID changes
 
   // Show edge properties if edge is selected
   if (edge && !node) {
@@ -199,7 +214,19 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
             <input
               type="text"
               value={node.actor ?? ''}
-              onChange={(e) => onNodeUpdate(node.id, { actor: e.target.value })}
+              onChange={(e) => {
+                const newActor = e.target.value;
+                // Update actor first
+                const updatedNode = { ...node, actor: newActor };
+                // Auto-adjust height based on new actor (affects display text)
+                const adjustedNode = autoAdjustNodeHeight(updatedNode);
+                // Send update with both actor and potentially adjusted size
+                onNodeUpdate(node.id, {
+                  actor: newActor,
+                  size: adjustedNode.size,
+                  connectionPoints: adjustedNode.connectionPoints,
+                });
+              }}
               style={{
                 width: '100%',
                 padding: '8px',
@@ -244,13 +271,38 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
             </label>
             <div style={{ position: 'relative' }}>
               <textarea
+                ref={textareaRef}
                 value={node.text}
-                onChange={(e) => onNodeUpdate(node.id, { text: e.target.value })}
+                onChange={(e) => {
+                  const newText = e.target.value;
+                  // Update text first
+                  const updatedNode = { ...node, text: newText };
+                  // Auto-adjust height based on new text
+                  const adjustedNode = autoAdjustNodeHeight(updatedNode);
+                  // Send update with both text and potentially adjusted size
+                  onNodeUpdate(node.id, {
+                    text: newText,
+                    size: adjustedNode.size,
+                    connectionPoints: adjustedNode.connectionPoints,
+                  });
+                }}
                 onInput={(e) => {
                   const target = e.target as HTMLTextAreaElement;
+                  const currentHeight = target.clientHeight;
+                  // Temporarily set height to auto to measure scrollHeight
                   target.style.height = 'auto';
-                  target.style.height = `${Math.max(80, Math.min(300, target.scrollHeight))}px`;
-                  setTextAreaHeight(Math.max(80, Math.min(300, target.scrollHeight)));
+                  const scrollHeight = target.scrollHeight;
+                  
+                  // Only increase height if content exceeds current height
+                  // Otherwise keep current height (don't shrink)
+                  if (scrollHeight > currentHeight) {
+                    const newHeight = Math.max(80, Math.min(300, scrollHeight));
+                    target.style.height = `${newHeight}px`;
+                    setTextAreaHeight(newHeight);
+                  } else {
+                    // Restore original height if content doesn't exceed
+                    target.style.height = `${currentHeight}px`;
+                  }
                 }}
                 style={{
                   width: '100%',
@@ -262,13 +314,27 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
                   borderRadius: '4px',
                   fontSize: '14px',
                   fontFamily: 'inherit',
-                  resize: 'vertical',
-                  overflowY: 'auto',
+                  resize: 'none',
+                  overflowY: 'hidden',
                 }}
                 placeholder="输入文本（支持换行）"
               />
+              {/* Character count in bottom-right corner */}
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '4px',
+                  right: '8px',
+                  fontSize: '11px',
+                  color: '#999',
+                  pointerEvents: 'none',
+                  padding: '2px 6px',
+                }}
+              >
+                {node.text.length} 字
+              </div>
               <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
-                提示：按 Enter 换行，可拖拽右下角调整大小
+                提示：按 Enter 换行
               </div>
             </div>
           </div>
