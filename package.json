@@ -1,6 +1,6 @@
 {
   "name": "flowchart-json-editor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A desktop Flowchart Editor for branching narrative and game script writing",
   "main": "dist/main.js",
   "scripts": {
@@ -17,7 +17,12 @@
     "start": "electron .",
     "preview": "vite preview"
   },
-  "keywords": ["electron", "flowchart", "editor", "narrative"],
+  "keywords": [
+    "electron",
+    "flowchart",
+    "editor",
+    "narrative"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
@@ -69,4 +74,3 @@
     "react-dom": "^18.2.0"
   }
 }
-
