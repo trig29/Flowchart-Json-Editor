@@ -41,7 +41,7 @@ function App() {
     isTransactionActive
   } = useUndoRedo<Flowchart>(createFlowchart());
 
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<{
     nodeId: string;
@@ -52,18 +52,32 @@ function App() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeIdCounter = useRef(0);
   const canvasViewStateRef = useRef<{ x: number; y: number; scale: number } | null>(null);
+  const lastMouseCanvasPosRef = useRef<Position | null>(null);
+  const clipboardRef = useRef<{ nodes: Node[]; edges: Edge[]; bboxCenter: Position } | null>(null);
+
+  // Selection management functions
+  const selectNodes = useCallback((ids: string[] | Set<string>) => {
+    setSelectedNodeIds(new Set(ids));
+    setSelectedEdgeId(null);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedNodeIds(new Set());
+    setSelectedEdgeId(null);
+  }, []);
+
 
   // Undo/Redo Handlers
   const handleUndo = useCallback(() => {
     undo();
-    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set());
     setSelectedEdgeId(null);
     setConnectingFrom(null);
   }, [undo]);
 
   const handleRedo = useCallback(() => {
     redo();
-    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set());
     setSelectedEdgeId(null);
     setConnectingFrom(null);
   }, [redo]);
@@ -109,8 +123,36 @@ function App() {
 
   const handleNodeMove = useCallback((nodeId: string, position: Position) => {
     // During move (drag), we update state directly without history history is handled by transaction
-    setFlowchart(updateNode(flowchartRef.current, nodeId, { position }));
-  }, [flowchartRef, setFlowchart]);
+    const currentNode = flowchartRef.current.nodes.find((n) => n.id === nodeId);
+    if (!currentNode) return;
+
+    // If this node is in the selection and there are multiple selected nodes, move all of them
+    if (selectedNodeIds.has(nodeId) && selectedNodeIds.size > 1) {
+      const oldPos = currentNode.position;
+      const delta = {
+        x: position.x - oldPos.x,
+        y: position.y - oldPos.y,
+      };
+
+      // Update all selected nodes with the same delta
+      let updatedFlowchart = flowchartRef.current;
+      selectedNodeIds.forEach((id) => {
+        const node = updatedFlowchart.nodes.find((n) => n.id === id);
+        if (node) {
+          updatedFlowchart = updateNode(updatedFlowchart, id, {
+            position: {
+              x: node.position.x + delta.x,
+              y: node.position.y + delta.y,
+            },
+          });
+        }
+      });
+      setFlowchart(updatedFlowchart);
+    } else {
+      // Single node move
+      setFlowchart(updateNode(flowchartRef.current, nodeId, { position }));
+    }
+  }, [flowchartRef, setFlowchart, selectedNodeIds]);
 
   const handleNodeUpdate = useCallback((nodeId: string, updates: Partial<Node>) => {
     // Root node is read-only except position/size/connectionPoints (allow move/resize).
@@ -237,9 +279,22 @@ function App() {
 
 
   const handleNodeSelect = useCallback((nodeId: string | null) => {
-    setSelectedNodeId(nodeId);
+    if (nodeId === null) {
+      clearSelection();
+      return;
+    }
+
+    // If the clicked node is already selected, keep the current multi-selection.
+    // This is required so that dragging one of the selected nodes moves the whole group.
+    if (selectedNodeIds.has(nodeId)) {
+      setSelectedEdgeId(null);
+      return;
+    }
+
+    // Otherwise, single click replaces selection with this node
+    setSelectedNodeIds(new Set([nodeId]));
     setSelectedEdgeId(null);
-  }, []);
+  }, [clearSelection, selectedNodeIds]);
 
   // Edge operations
   const handleConnectionStart = useCallback((nodeId: string, pointId: string) => {
@@ -302,7 +357,7 @@ function App() {
 
   const handleEdgeSelect = useCallback((edgeId: string | null) => {
     setSelectedEdgeId(edgeId);
-    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set());
   }, []);
 
   const handleEdgeDelete = useCallback((edgeId: string) => {
@@ -338,8 +393,10 @@ function App() {
     const n = flowchartRef.current.nodes.find((x) => x.id === nodeId);
     if (n?.tag === 'root') return;
     setStateWithHistory(applyDerivedFlowchart(removeNode(flowchartRef.current, nodeId)));
-    setSelectedNodeId(null);
-  }, [flowchartRef, setStateWithHistory]);
+    const newSelection = new Set(selectedNodeIds);
+    newSelection.delete(nodeId);
+    setSelectedNodeIds(newSelection);
+  }, [flowchartRef, setStateWithHistory, selectedNodeIds]);
 
   // File operations
   const handleSave = useCallback(async () => {
@@ -433,6 +490,122 @@ function App() {
         return;
       }
 
+      // Copy (Ctrl/Cmd+C)
+      if (isCtrlOrCmd && (e.key === 'c' || e.key === 'C')) {
+        if (isEditingText) return;
+        if (selectedNodeIds.size > 0) {
+          e.preventDefault();
+          const nodesToCopy = flowchartRef.current.nodes
+            .filter((n) => selectedNodeIds.has(n.id) && n.tag !== 'root')
+            .map((n) => ({ ...n })); // Deep copy
+          
+          const edgesToCopy = flowchartRef.current.edges.filter((edge) => {
+            return selectedNodeIds.has(edge.sourceNodeId) && selectedNodeIds.has(edge.targetNodeId);
+          }).map((e) => ({ ...e })); // Deep copy
+
+          // Calculate bounding box center
+          if (nodesToCopy.length > 0) {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            nodesToCopy.forEach((node) => {
+              const left = node.position.x - node.size.width / 2;
+              const top = node.position.y - node.size.height / 2;
+              const right = node.position.x + node.size.width / 2;
+              const bottom = node.position.y + node.size.height / 2;
+              minX = Math.min(minX, left);
+              minY = Math.min(minY, top);
+              maxX = Math.max(maxX, right);
+              maxY = Math.max(maxY, bottom);
+            });
+            const bboxCenter: Position = {
+              x: (minX + maxX) / 2,
+              y: (minY + maxY) / 2,
+            };
+            clipboardRef.current = { nodes: nodesToCopy, edges: edgesToCopy, bboxCenter };
+          }
+        }
+        return;
+      }
+
+      // Paste (Ctrl/Cmd+V)
+      if (isCtrlOrCmd && (e.key === 'v' || e.key === 'V')) {
+        if (isEditingText) return;
+        if (clipboardRef.current && lastMouseCanvasPosRef.current) {
+          e.preventDefault();
+          const { nodes: nodesToPaste, edges: edgesToPaste, bboxCenter } = clipboardRef.current;
+          const pasteCenter = lastMouseCanvasPosRef.current;
+          const offset = {
+            x: pasteCenter.x - bboxCenter.x,
+            y: pasteCenter.y - bboxCenter.y,
+          };
+
+          // Create ID mapping
+          const idMap = new Map<string, string>();
+          nodesToPaste.forEach((node) => {
+            const newId = `node-${nodeIdCounter.current++}`;
+            idMap.set(node.id, newId);
+          });
+
+          // Create new nodes with remapped IDs
+          const newNodes: Node[] = nodesToPaste.map((node) => {
+            const newId = idMap.get(node.id)!;
+            return {
+              ...node,
+              id: newId,
+              position: {
+                x: node.position.x + offset.x,
+                y: node.position.y + offset.y,
+              },
+              connectionPoints: node.connectionPoints.map((cp) => {
+                // Remap connection point IDs (format: nodeId-input/output)
+                const oldPrefix = `${node.id}-`;
+                const newPrefix = `${newId}-`;
+                const newCpId = cp.id.startsWith(oldPrefix) 
+                  ? cp.id.replace(oldPrefix, newPrefix)
+                  : `${newId}-${cp.id}`;
+                return { ...cp, id: newCpId };
+              }),
+            };
+          });
+
+          // Create new edges with remapped IDs
+          const newEdges: Edge[] = edgesToPaste.map((edge) => {
+            const newSourceId = idMap.get(edge.sourceNodeId)!;
+            const newTargetId = idMap.get(edge.targetNodeId)!;
+            const newSourcePointId = edge.sourcePointId.replace(
+              `${edge.sourceNodeId}-`,
+              `${newSourceId}-`
+            );
+            const newTargetPointId = edge.targetPointId.replace(
+              `${edge.targetNodeId}-`,
+              `${newTargetId}-`
+            );
+            return {
+              ...edge,
+              id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              sourceNodeId: newSourceId,
+              targetNodeId: newTargetId,
+              sourcePointId: newSourcePointId,
+              targetPointId: newTargetPointId,
+            };
+          });
+
+          // Add nodes and edges to flowchart
+          let updatedFlowchart = flowchartRef.current;
+          newNodes.forEach((node) => {
+            updatedFlowchart = addNode(updatedFlowchart, node);
+          });
+          newEdges.forEach((edge) => {
+            updatedFlowchart = addEdge(updatedFlowchart, edge);
+          });
+          updatedFlowchart = applyDerivedFlowchart(updatedFlowchart);
+          setStateWithHistory(updatedFlowchart);
+
+          // Select the newly pasted nodes
+          setSelectedNodeIds(new Set(newNodes.map((n) => n.id)));
+        }
+        return;
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isEditingText) return;
         if (selectedEdgeId) {
@@ -440,18 +613,37 @@ function App() {
           handleEdgeDelete(selectedEdgeId);
           return;
         }
-        if (selectedNodeId) {
-          const n = flowchartRef.current.nodes.find((x) => x.id === selectedNodeId);
+        // Handle multi-select delete
+        if (selectedNodeIds.size > 0) {
+          e.preventDefault();
+          const nodesToDelete = Array.from(selectedNodeIds).filter((id) => {
+            const n = flowchartRef.current.nodes.find((x) => x.id === id);
+            return n && n.tag !== 'root';
+          });
+          if (nodesToDelete.length > 0) {
+            let updatedFlowchart = flowchartRef.current;
+            nodesToDelete.forEach((id) => {
+              updatedFlowchart = removeNode(updatedFlowchart, id);
+            });
+            setStateWithHistory(applyDerivedFlowchart(updatedFlowchart));
+            clearSelection();
+          }
+          return;
+        }
+        // Fallback to single node delete (for backward compatibility)
+        if (selectedNodeIds.size === 1) {
+          const nodeId = Array.from(selectedNodeIds)[0];
+          const n = flowchartRef.current.nodes.find((x) => x.id === nodeId);
           if (n?.tag === 'root') return;
           e.preventDefault();
-          handleNodeDelete(selectedNodeId);
+          handleNodeDelete(nodeId);
         }
       }
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleSave, handleUndo, handleRedo, selectedEdgeId, selectedNodeId, handleEdgeDelete, handleNodeDelete]);
+  }, [handleSave, handleUndo, handleRedo, selectedEdgeId, selectedNodeIds, handleEdgeDelete, handleNodeDelete, flowchartRef, setStateWithHistory, applyDerivedFlowchart, removeNode, clearSelection, addNode, addEdge]);
 
   const handleLoad = useCallback(async () => {
     if (!window.electronAPI) {
@@ -465,8 +657,7 @@ function App() {
         const loadedFlowchart = deserializeFlowchart(result.data);
         resetHistory();
         setFlowchart(loadedFlowchart);
-        setSelectedNodeId(null);
-        setSelectedEdgeId(null);
+        clearSelection();
         if (result.path) {
           setCurrentFilePath(result.path);
           const pathParts = result.path.split(/[/\\]/);
@@ -490,7 +681,7 @@ function App() {
       console.error('Failed to load file:', error);
       alert('加载文件失败。请检查文件格式。');
     }
-  }, [resetHistory, setFlowchart]);
+  }, [resetHistory, setFlowchart, clearSelection]);
 
   // Project management handlers
   const handleNewProject = useCallback(async () => {
@@ -498,8 +689,7 @@ function App() {
       alert('Electron API 不可用。正在浏览器模式下运行。');
       resetHistory();
       setFlowchart(createFlowchart());
-      setSelectedNodeId(null);
-      setSelectedEdgeId(null);
+      clearSelection();
       setProjectPath(null);
       setCurrentFilePath(null);
       nodeIdCounter.current = 0;
@@ -512,15 +702,14 @@ function App() {
         setProjectPath(result.path);
         resetHistory();
         setFlowchart(createFlowchart());
-        setSelectedNodeId(null);
-        setSelectedEdgeId(null);
+        clearSelection();
         nodeIdCounter.current = 0;
       }
     } catch (error) {
       console.error('Failed to create project:', error);
       alert('创建项目失败');
     }
-  }, [resetHistory, setFlowchart]);
+  }, [resetHistory, setFlowchart, clearSelection]);
 
   const handleOpenProject = useCallback(async () => {
     if (!window.electronAPI) {
@@ -534,8 +723,7 @@ function App() {
         setProjectPath(result.path);
         resetHistory();
         setFlowchart(createFlowchart());
-        setSelectedNodeId(null);
-        setSelectedEdgeId(null);
+        clearSelection();
         setCurrentFilePath(null);
         nodeIdCounter.current = 0;
       }
@@ -543,7 +731,7 @@ function App() {
       console.error('Failed to open project:', error);
       alert('打开项目失败');
     }
-  }, [resetHistory, setFlowchart]);
+  }, [resetHistory, setFlowchart, clearSelection]);
 
   const handleLoadFile = useCallback(async (filePath: string) => {
     if (!window.electronAPI) {
@@ -570,8 +758,7 @@ function App() {
         const loadedFlowchart = deserializeFlowchart(result.data);
         resetHistory();
         setFlowchart(loadedFlowchart);
-        setSelectedNodeId(null);
-        setSelectedEdgeId(null);
+        clearSelection();
         setCurrentFilePath(filePath);
         
         if (loadedFlowchart.viewState) {
@@ -588,7 +775,7 @@ function App() {
       console.error('Failed to load file:', error);
       alert('加载文件失败。请检查文件格式。');
     }
-  }, [currentFilePath, flowchart, resetHistory, setFlowchart]);
+  }, [currentFilePath, flowchart, resetHistory, setFlowchart, clearSelection]);
 
   const handleSaveFile = useCallback(async (filePath: string, data: string) => {
     if (!window.electronAPI) {
@@ -902,6 +1089,8 @@ function App() {
       .replace(/'/g, '&apos;');
   };
 
+  // For PropertyPanel: show properties of first selected node (or null if none)
+  const selectedNodeId = selectedNodeIds.size > 0 ? Array.from(selectedNodeIds)[0] : null;
   const selectedNode = flowchart.nodes.find((n) => n.id === selectedNodeId) || null;
   const selectedEdge = flowchart.edges.find((e) => e.id === selectedEdgeId) || null;
 
@@ -939,9 +1128,11 @@ function App() {
         <div ref={canvasRef} className="paneCenter">
           <Canvas
             flowchart={flowchart}
-            selectedNodeId={selectedNodeId}
+            selectedNodeIds={selectedNodeIds}
             selectedEdgeId={selectedEdgeId}
             onNodeSelect={handleNodeSelect}
+            onNodesSelect={selectNodes}
+            onClearSelection={clearSelection}
             onEdgeSelect={handleEdgeSelect}
             onNodeMove={handleNodeMove}
             onNodeUpdate={handleNodeUpdate}
@@ -952,6 +1143,9 @@ function App() {
             onConnectionCancel={handleConnectionCancel}
             onViewStateChange={(viewState) => {
               canvasViewStateRef.current = viewState;
+            }}
+            onMouseMove={(pos) => {
+              lastMouseCanvasPosRef.current = pos;
             }}
             initialViewState={canvasViewStateRef.current || undefined}
             canvasRef={canvasRef}

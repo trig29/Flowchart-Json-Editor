@@ -10,9 +10,11 @@ import { EdgeComponent } from './Edge';
 
 interface CanvasProps {
   flowchart: Flowchart;
-  selectedNodeId: string | null;
+  selectedNodeIds: Set<string>;
   selectedEdgeId: string | null;
   onNodeSelect: (nodeId: string | null) => void;
+  onNodesSelect: (ids: string[] | Set<string>) => void;
+  onClearSelection: () => void;
   onEdgeSelect: (edgeId: string | null) => void;
   onNodeMove: (nodeId: string, position: Position) => void;
   onNodeUpdate: (nodeId: string, updates: Partial<Node>) => void;
@@ -22,6 +24,7 @@ interface CanvasProps {
   onConnectionEnd: (nodeId: string, pointId: string) => void;
   onConnectionCancel: () => void;
   onViewStateChange?: (viewState: { x: number; y: number; scale: number }) => void;
+  onMouseMove?: (pos: Position) => void;
   initialViewState?: { x: number; y: number; scale: number };
   canvasRef?: React.RefObject<HTMLDivElement>;
   onNodeInteractionStart?: () => void;
@@ -43,9 +46,11 @@ const screenToCanvas = (
 
 export const Canvas: React.FC<CanvasProps> = ({
   flowchart,
-  selectedNodeId,
+  selectedNodeIds,
   selectedEdgeId,
   onNodeSelect,
+  onNodesSelect,
+  onClearSelection,
   onEdgeSelect,
   onNodeMove,
   onNodeUpdate,
@@ -55,6 +60,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   onConnectionEnd,
   onConnectionCancel,
   onViewStateChange,
+  onMouseMove,
   initialViewState,
   canvasRef: externalCanvasRef,
   onNodeInteractionStart,
@@ -68,6 +74,13 @@ export const Canvas: React.FC<CanvasProps> = ({
   const panPointerIdRef = useRef<number | null>(null);
   const panStartClientRef = useRef<Position>({ x: 0, y: 0 });
   const panStartTransformRef = useRef<{ x: number; y: number; scale: number }>({ x: 0, y: 0, scale: 1 });
+  
+  // Marquee selection state
+  const [isMarquee, setIsMarquee] = useState(false);
+  const [marqueeStart, setMarqueeStart] = useState<Position | null>(null);
+  const [marqueeCurrent, setMarqueeCurrent] = useState<Position | null>(null);
+  const marqueePointerIdRef = useRef<number | null>(null);
+  const rightDragThresholdPx = 5;
 
   const cancelPan = useCallback(() => {
     const pid = panPointerIdRef.current;
@@ -100,12 +113,34 @@ export const Canvas: React.FC<CanvasProps> = ({
   // Pan with pointer events (supports mouse drag on empty area)
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // Right button for marquee selection
+      if (e.button === 2) {
+        const target = e.target as HTMLElement | null;
+        const clickedOnNode = target?.closest?.('[data-node]');
+        const clickedOnEdge = target?.closest?.('svg path');
+        
+        // Only start marquee on empty canvas area
+        if (!clickedOnNode && !clickedOnEdge && e.target === e.currentTarget) {
+          const rect = canvasRef.current?.getBoundingClientRect();
+          if (rect) {
+            const startPos = screenToCanvas(e.clientX, e.clientY, rect, transform);
+            setMarqueeStart(startPos);
+            setMarqueeCurrent(startPos);
+            setIsMarquee(true);
+            marqueePointerIdRef.current = e.pointerId;
+            // Don't preventDefault yet - wait for drag threshold
+          }
+        }
+        return;
+      }
+
       // Middle button always pans, left button pans only on empty area
       const isMiddle = e.button === 1;
       const isLeft = e.button === 0;
 
       if (!isMiddle && !isLeft) return;
       if (!isMiddle && connectingFrom) return;
+      if (isMarquee) return; // Don't pan while marquee is active
 
       const target = e.target as HTMLElement | null;
       const clickedOnNode = target?.closest?.('[data-node]');
@@ -122,10 +157,33 @@ export const Canvas: React.FC<CanvasProps> = ({
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       e.preventDefault();
     },
-    [connectingFrom, transform]
+    [connectingFrom, transform, isMarquee, canvasRef]
   );
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    // Handle marquee selection
+    if (marqueePointerIdRef.current === e.pointerId && marqueeStart) {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (rect) {
+        const currentPos = screenToCanvas(e.clientX, e.clientY, rect, transform);
+        setMarqueeCurrent(currentPos);
+        
+        // Check if drag distance exceeds threshold
+        const dx = e.clientX - (rect.left + (marqueeStart.x * transform.scale + transform.x));
+        const dy = e.clientY - (rect.top + (marqueeStart.y * transform.scale + transform.y));
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance > rightDragThresholdPx && !isMarquee) {
+          setIsMarquee(true);
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          e.preventDefault();
+        } else if (isMarquee) {
+          e.preventDefault();
+        }
+      }
+      return;
+    }
+
     if (!isPanning) return;
     if (panPointerIdRef.current !== e.pointerId) return;
 
@@ -138,9 +196,54 @@ export const Canvas: React.FC<CanvasProps> = ({
       x: start.x + dx,
       y: start.y + dy,
     }));
-  }, [isPanning]);
+  }, [isPanning, marqueeStart, transform, isMarquee, canvasRef]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    // Handle marquee end
+    if (marqueePointerIdRef.current === e.pointerId) {
+      if (isMarquee && marqueeStart && marqueeCurrent) {
+        // Calculate selected nodes
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          const minX = Math.min(marqueeStart.x, marqueeCurrent.x);
+          const maxX = Math.max(marqueeStart.x, marqueeCurrent.x);
+          const minY = Math.min(marqueeStart.y, marqueeCurrent.y);
+          const maxY = Math.max(marqueeStart.y, marqueeCurrent.y);
+          
+          const selectedIds: string[] = [];
+          flowchart.nodes.forEach((node) => {
+            // Check if node AABB intersects with marquee rectangle
+            const nodeLeft = node.position.x - node.size.width / 2;
+            const nodeRight = node.position.x + node.size.width / 2;
+            const nodeTop = node.position.y - node.size.height / 2;
+            const nodeBottom = node.position.y + node.size.height / 2;
+            
+            // Intersection check
+            if (!(nodeRight < minX || nodeLeft > maxX || nodeBottom < minY || nodeTop > maxY)) {
+              selectedIds.push(node.id);
+            }
+          });
+          
+          if (selectedIds.length > 0) {
+            onNodesSelect(selectedIds);
+          } else {
+            onClearSelection();
+          }
+        }
+      }
+      
+      setIsMarquee(false);
+      setMarqueeStart(null);
+      setMarqueeCurrent(null);
+      marqueePointerIdRef.current = null;
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
     if (panPointerIdRef.current !== e.pointerId) return;
     panPointerIdRef.current = null;
     setIsPanning(false);
@@ -149,7 +252,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     } catch {
       // ignore
     }
-  }, []);
+  }, [isMarquee, marqueeStart, marqueeCurrent, flowchart, onNodesSelect, onClearSelection, canvasRef]);
 
   // If the app loses focus (dialogs, alt-tab), pointerup might never fire.
   // Make sure panning doesn't stay "stuck" and block subsequent interactions.
@@ -168,18 +271,25 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (connectingFrom) {
-        // Show temporary connection line
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (rect) {
-          // Convert mouse screen coordinates to canvas coordinates
-          const canvasX = (e.clientX - rect.left - transform.x) / transform.scale;
-          const canvasY = (e.clientY - rect.top - transform.y) / transform.scale;
-          setTempConnection({ x: canvasX, y: canvasY });
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (rect) {
+        // Convert mouse screen coordinates to canvas coordinates
+        const canvasX = (e.clientX - rect.left - transform.x) / transform.scale;
+        const canvasY = (e.clientY - rect.top - transform.y) / transform.scale;
+        const canvasPos = { x: canvasX, y: canvasY };
+        
+        // Report mouse position to parent for paste positioning
+        if (onMouseMove) {
+          onMouseMove(canvasPos);
+        }
+        
+        if (connectingFrom) {
+          // Show temporary connection line
+          setTempConnection(canvasPos);
         }
       }
     },
-    [transform, connectingFrom]
+    [transform, connectingFrom, onMouseMove]
   );
 
   // Global mouse move handler for temporary connection line
@@ -284,7 +394,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         position: 'relative',
         overflow: 'hidden',
         backgroundColor: '#f5f5f5',
-        cursor: isPanning ? 'grabbing' : connectingFrom ? 'crosshair' : 'grab',
+        cursor: isMarquee ? 'crosshair' : isPanning ? 'grabbing' : connectingFrom ? 'crosshair' : 'grab',
         touchAction: 'none',
       }}
     >
@@ -298,14 +408,13 @@ export const Canvas: React.FC<CanvasProps> = ({
         }}
         onMouseDown={(e) => {
           // Allow panning when clicking on the transformed container background
-          if (e.button === 0 && !connectingFrom && e.target === e.currentTarget) {
+          if (e.button === 0 && !connectingFrom && !isMarquee && e.target === e.currentTarget) {
             const target = e.target as HTMLElement;
             const clickedOnNode = target.closest('[data-node]');
             const clickedOnEdge = target.closest('svg path');
             
             if (!clickedOnNode && !clickedOnEdge) {
-              setIsPanning(true);
-              setPanStart({ x: e.clientX - transform.x, y: e.clientY - transform.y });
+              // This is handled by pointer events, but we can prevent default here
               e.preventDefault();
               e.stopPropagation();
             }
@@ -313,13 +422,18 @@ export const Canvas: React.FC<CanvasProps> = ({
         }}
         onClick={(e) => {
           // Click on the transformed container (background)
-          // Only deselect if not panning (to avoid deselecting while dragging)
-          if (e.target === e.currentTarget && !isPanning) {
-            onNodeSelect(null);
-            onEdgeSelect(null);
+          // Only deselect if not panning and not marquee (to avoid deselecting while dragging)
+          if (e.target === e.currentTarget && !isPanning && !isMarquee && e.button === 0) {
+            onClearSelection();
             if (connectingFrom) {
               onConnectionCancel();
             }
+          }
+        }}
+        onContextMenu={(e) => {
+          // Prevent context menu if marquee is active
+          if (isMarquee) {
+            e.preventDefault();
           }
         }}
       >
@@ -446,12 +560,29 @@ export const Canvas: React.FC<CanvasProps> = ({
           );
         })()}
 
+        {/* Marquee selection rectangle */}
+        {isMarquee && marqueeStart && marqueeCurrent && (
+          <div
+            style={{
+              position: 'absolute',
+              left: Math.min(marqueeStart.x, marqueeCurrent.x),
+              top: Math.min(marqueeStart.y, marqueeCurrent.y),
+              width: Math.abs(marqueeCurrent.x - marqueeStart.x),
+              height: Math.abs(marqueeCurrent.y - marqueeStart.y),
+              border: '2px dashed #2196f3',
+              backgroundColor: 'rgba(33, 150, 243, 0.1)',
+              pointerEvents: 'none',
+              zIndex: 100,
+            }}
+          />
+        )}
+
         {/* Render nodes */}
         {flowchart.nodes.map((node) => (
           <NodeComponent
             key={node.id}
             node={node}
-            isSelected={node.id === selectedNodeId}
+            isSelected={selectedNodeIds.has(node.id)}
             onSelect={() => onNodeSelect(node.id)}
             onMove={(position) => onNodeMove(node.id, position)}
             onUpdate={(updates) => onNodeUpdate(node.id, updates)}
